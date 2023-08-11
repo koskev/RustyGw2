@@ -1,0 +1,15 @@
+[package]
+name = "RustyGw2"
+version = "0.1.0"
+edition = "2021"
+#workspace = ".."
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = { version = "0.11.0" }
+nix = "0.26.2"
+static_assertions = "1.1.0"
+x11 = { version = "2.21.0", features = ["xfixes", "xlib", "xlib_xcb"] }
+xcb = { version = "1.2.2", features = ["xfixes", "xlib_xcb"] }
+custom_window_plugin = { version = "0.11.0", path = "../custom_window_plugin" }

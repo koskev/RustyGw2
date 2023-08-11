@@ -23,29 +23,24 @@ use winit::{
 use crate::web_resize::{CanvasParentResizeEventChannel, WINIT_CANVAS_SELECTOR};
 use crate::{
     accessibility::{AccessKitAdapters, WinitActionHandlers},
-    converters::{
-        self, convert_enabled_buttons, convert_window_level, convert_window_theme,
-        convert_winit_theme,
-    },
-    get_best_videomode, get_fitting_videomode, WinitWindows,
+    converters::{self, convert_window_level, convert_window_theme, convert_winit_theme},
+    custom_window, get_best_videomode, get_fitting_videomode, WinitWindows,
 };
 
-/// Creates new windows on the [`winit`] backend for each entity with a newly-added
-/// [`Window`] component.
+/// System responsible for creating new windows whenever a [`Window`] component is added
+/// to an entity.
 ///
-/// If any of these entities are missing required components, those will be added with their
-/// default values.
+/// This will default any necessary components if they are not already added.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn create_windows<'a>(
-    event_loop: &EventLoopWindowTarget<()>,
+pub(crate) fn create_window<'a>(
     mut commands: Commands,
+    event_loop: &EventLoopWindowTarget<()>,
     created_windows: impl Iterator<Item = (Entity, Mut<'a, Window>)>,
     mut event_writer: EventWriter<WindowCreated>,
     mut winit_windows: NonSendMut<WinitWindows>,
     mut adapters: NonSendMut<AccessKitAdapters>,
     mut handlers: ResMut<WinitActionHandlers>,
     mut accessibility_requested: ResMut<AccessibilityRequested>,
-    #[cfg(target_arch = "wasm32")] event_channel: ResMut<CanvasParentResizeEventChannel>,
 ) {
     for (entity, mut window) in created_windows {
         if winit_windows.get_window(entity).is_some() {
@@ -71,6 +66,8 @@ pub(crate) fn create_windows<'a>(
             window.window_theme = Some(convert_winit_theme(theme));
         }
 
+        //let (my_display, my_window) = custom_window::create_window();
+
         window
             .resolution
             .set_scale_factor(winit_window.scale_factor());
@@ -79,22 +76,12 @@ pub(crate) fn create_windows<'a>(
             .insert(RawHandleWrapper {
                 window_handle: winit_window.raw_window_handle(),
                 display_handle: winit_window.raw_display_handle(),
+                //window_handle: my_window,
+                //display_handle: my_display,
             })
             .insert(CachedWindow {
                 window: window.clone(),
             });
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            if window.fit_canvas_to_parent {
-                let selector = if let Some(selector) = &window.canvas {
-                    selector
-                } else {
-                    WINIT_CANVAS_SELECTOR
-                };
-                event_channel.listen_to_selector(entity, selector);
-            }
-        }
 
         event_writer.send(WindowCreated { window: entity });
     }
@@ -104,7 +91,7 @@ pub(crate) fn create_windows<'a>(
 #[derive(Debug, Clone, Resource)]
 pub struct WindowTitleCache(HashMap<Entity, String>);
 
-pub(crate) fn despawn_windows(
+pub(crate) fn despawn_window(
     mut closed: RemovedComponents<Window>,
     window_entities: Query<&Window>,
     mut close_events: EventWriter<WindowClosed>,
@@ -127,15 +114,14 @@ pub struct CachedWindow {
     pub window: Window,
 }
 
-/// Propagates changes from [`Window`] entities to the [`winit`] backend.
-///
-/// # Notes
-///
-/// - [`Window::present_mode`] and [`Window::composite_alpha_mode`] changes are handled by the `bevy_render` crate.
-/// - [`Window::transparent`] cannot be changed after the window is created.
-/// - [`Window::canvas`] cannot be changed after the window is created.
-/// - [`Window::focused`] cannot be manually changed to `false` after the window is created.
-pub(crate) fn changed_windows(
+// Detect changes to the window and update the winit window accordingly.
+//
+// Notes:
+// - [`Window::present_mode`] and [`Window::composite_alpha_mode`] updating should be handled in the bevy render crate.
+// - [`Window::transparent`] currently cannot be updated after startup for winit.
+// - [`Window::canvas`] currently cannot be updated after startup, not entirely sure if it would work well with the
+//   event channel stuff.
+pub(crate) fn changed_window(
     mut changed_windows: Query<(Entity, &mut Window, &mut CachedWindow), Changed<Window>>,
     winit_windows: NonSendMut<WinitWindows>,
 ) {
@@ -227,10 +213,6 @@ pub(crate) fn changed_windows(
                 winit_window.set_resizable(window.resizable);
             }
 
-            if window.enabled_buttons != cache.window.enabled_buttons {
-                winit_window.set_enabled_buttons(convert_enabled_buttons(window.enabled_buttons));
-            }
-
             if window.resize_constraints != cache.window.resize_constraints {
                 let constraints = window.resize_constraints.check_constraints();
                 let min_inner_size = LogicalSize {
@@ -288,14 +270,6 @@ pub(crate) fn changed_windows(
                 window.transparent = cache.window.transparent;
                 warn!(
                     "Winit does not currently support updating transparency after window creation."
-                );
-            }
-
-            #[cfg(target_arch = "wasm32")]
-            if window.canvas != cache.window.canvas {
-                window.canvas = cache.window.canvas.clone();
-                warn!(
-                    "Bevy currently doesn't support modifying the window canvas after initialization."
                 );
             }
 

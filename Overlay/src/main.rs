@@ -3,6 +3,7 @@
 use std::{f32::consts::PI, ptr::null};
 
 use bevy::{
+    ecs::system::SystemState,
     prelude::*,
     window::{Window, WindowLevel, WindowResolution},
 };
@@ -26,7 +27,7 @@ struct GlobalState {
     gw2link: GW2Link,
 }
 
-fn create_window() -> Window {
+fn create_window() {
     let x = 1;
     let y = 1;
     let w = 0;
@@ -142,41 +143,36 @@ fn create_window() -> Window {
     conn.send_request(&x::MapWindow { window });
 
     conn.flush().unwrap();
+}
 
-    loop {
-        conn.wait_for_event().unwrap();
+struct MyPlugin {}
+
+impl Plugin for MyPlugin {
+    fn build(&self, app: &mut App) {
+        let mut state = SystemState::<Commands>::from_world(&mut app.world);
+
+        let commands = state.get_mut(&mut app.world);
+
+        //let (display, window) = custom_window::create_window();
     }
-    let w = Window::default();
 }
 
 fn main() {
-    create_window();
-    loop {}
-    return ();
-    let mut window_descriptor = Window {
-        // Enable transparent support for the window
-        transparent: true,
-        decorations: false,
-        window_level: WindowLevel::AlwaysOnTop,
-        // Allows inputs to pass through to apps behind this app. New to bevy 0.10
-        resolution: WindowResolution::new(800.0, 600.0),
-        ..default()
-    };
-    window_descriptor.cursor.hit_test = false;
+    //create_window();
 
-    let pid = processutils::find_wine_process("GW2-64.exe");
-    println!("Got pid {:?}", pid);
-    processutils::start_gw2_helper(pid.unwrap(), "/tmp/mumble.exe");
+    //let pid = processutils::find_wine_process("GW2-64.exe");
+    //println!("Got pid {:?}", pid);
+    //processutils::start_gw2_helper(pid.unwrap(), "/tmp/mumble.exe");
 
+    // TODO: instead of own plugin just change the attributes etc. of the existing window by
+    // getting the raw handle
     App::new()
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_camera)
-        .add_systems(Update, update_gw2)
+        //.add_systems(Update, update_gw2)
         .insert_resource(ClearColor(Color::NONE))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(window_descriptor),
-            ..default()
-        }))
+        .add_plugins(DefaultPlugins.build().disable::<bevy::winit::WinitPlugin>())
+        .add_plugins(custom_window_plugin::WinitPlugin)
         .run();
 }
 
