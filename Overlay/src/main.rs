@@ -6,6 +6,7 @@ use walkdir::WalkDir;
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     prelude::{shape::Quad, *},
+    render::render_resource::{AddressMode, SamplerDescriptor},
     window::PresentMode,
 };
 use bevy_mod_billboard::prelude::*;
@@ -15,7 +16,7 @@ mod gw2poi;
 mod processutils;
 
 use gw2link::GW2Link;
-use gw2poi::PoiContainer;
+use gw2poi::{PoiContainer, TrailContainer};
 
 use crate::gw2poi::OverlayData;
 
@@ -58,7 +59,21 @@ fn main() {
         .add_systems(Update, map_change_event)
         .insert_resource(ClearColor(Color::NONE))
         .insert_resource(CurrentLevel(0))
-        .add_plugins(DefaultPlugins.build().disable::<bevy::winit::WinitPlugin>())
+        .add_plugins(
+            DefaultPlugins
+                .build()
+                .disable::<bevy::winit::WinitPlugin>()
+                // Set the sampler mode to repeat for the trails to work
+                // https://github.com/bevyengine/bevy/issues/399
+                .set(ImagePlugin {
+                    default_sampler: SamplerDescriptor {
+                        address_mode_u: AddressMode::Repeat,
+                        address_mode_v: AddressMode::Repeat,
+                        address_mode_w: AddressMode::Repeat,
+                        ..Default::default()
+                    },
+                }),
+        )
         .add_plugins(custom_window_plugin::WinitPlugin)
         .add_plugins(BillboardPlugin)
         .add_plugins(FrameTimeDiagnosticsPlugin)
@@ -160,9 +175,13 @@ fn setup(
 
     // camera
     let mut cam_bundle = Camera3dBundle::default();
-    let mut projection = PerspectiveProjection::default();
-    projection.fov = 1.222;
+    let projection = PerspectiveProjection {
+        fov: 1.222,
+        far: 1000.0,
+        ..Default::default()
+    };
     cam_bundle.projection = Projection::Perspective(projection);
+    cam_bundle.transform = Transform::from_translation(Vec3::new(0.0, 0.0, -1.0));
 
     commands.spawn((cam_bundle, Gw2Camera));
 
@@ -244,8 +263,10 @@ fn draw_lines(mut gizmos: Gizmos) {
 struct BevyPOI {
     poi: PoiContainer,
 }
-
-impl BevyPOI {}
+#[derive(Component)]
+struct BevyTrail {
+    trail: TrailContainer,
+}
 
 #[derive(Event)]
 struct MapChangeEvent(u32);
@@ -254,6 +275,7 @@ fn map_change_event(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut billboard_textures: ResMut<Assets<BillboardTexture>>,
     mut ev_map_change: EventReader<MapChangeEvent>,
     pois: Query<(Entity, With<BevyPOI>)>,
@@ -286,13 +308,46 @@ fn map_change_event(
                         mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
                         transform: Transform::from_xyz(
                             poi.pos.xpos,
-                            poi.pos.ypos + poi.get_height_offset().unwrap_or(0),
+                            poi.pos.ypos + poi.get_height_offset().unwrap_or(0.0),
                             -poi.pos.zpos,
                         ),
                         ..default()
                     },
                     entity,
                 ));
+            }
+        });
+
+        info!("Number of trails: {}", map_data.data.pois.trail_list.len());
+        map_data.data.pois.trail_list.iter().for_each(|trail_lock| {
+            let trail = trail_lock.read().unwrap();
+            if current_map == trail.poi.get_map_id().unwrap_or(0) {
+                let texture = trail.texture.clone();
+                let texture_handle =
+                    asset_server.load(texture.to_string_lossy().replace(r"\", "/"));
+
+                let entity = BevyTrail {
+                    trail: trail_lock.clone(),
+                };
+                let trail_meshes = trail.generate_meshes();
+
+                let pbr_bundles: Vec<PbrBundle> = trail_meshes
+                    .into_iter()
+                    .map(|mesh| PbrBundle {
+                        mesh: meshes.add(mesh),
+                        material: materials.add(StandardMaterial {
+                            base_color_texture: Some(texture_handle.clone()),
+                            unlit: true,
+                            alpha_mode: AlphaMode::Blend,
+                            ..default()
+                        }),
+                        ..default()
+                    })
+                    .collect();
+
+                for bundle in pbr_bundles {
+                    commands.spawn(bundle);
+                }
             }
         });
     }

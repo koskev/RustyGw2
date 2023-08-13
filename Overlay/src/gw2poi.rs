@@ -9,6 +9,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use bevy::{
+    prelude::{info, Mesh, Vec2, Vec3},
+    render::{mesh::Indices, render_resource::PrimitiveTopology},
+};
 use byteorder::{LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -181,6 +185,7 @@ pub struct OverlayData {
 impl OverlayData {
     pub fn merge(&mut self, mut other: OverlayData) {
         self.pois.poi_list.append(&mut other.pois.poi_list);
+        self.pois.trail_list.append(&mut other.pois.trail_list);
         self.marker_category.append(&mut other.marker_category);
     }
     pub fn from_file(file_path: &str) -> Result<Self, Box<dyn Error>> {
@@ -189,6 +194,11 @@ impl OverlayData {
         let mut de = serde_xml_rs::Deserializer::new_from_reader(file_handle)
             .non_contiguous_seq_elements(true);
         let data = OverlayData::deserialize(&mut de)?;
+        info!(
+            "Loaded {} POIs and {} Trails",
+            data.pois.poi_list.len(),
+            data.pois.trail_list.len()
+        );
         Ok(data)
     }
 
@@ -199,6 +209,11 @@ impl OverlayData {
     }
 
     pub fn fill_poi_parents(&mut self) {
+        self.pois.trail_list.iter().for_each(|trail_lock| {
+            let mut trail = trail_lock.write().unwrap();
+            info!("Filling trail {:?}", trail.texture);
+            trail.load_map_trail().unwrap();
+        });
         self.pois.poi_list.iter_mut().for_each(|poi| {
             self.marker_category.iter().for_each(|category| {
                 let category_name = poi.read().unwrap().poi_type.clone();
@@ -400,8 +415,11 @@ pub struct Trail {
 }
 
 impl Trail {
-    fn load_map_trail(&mut self) -> Result<(), Box<dyn Error>> {
-        let f = fs::File::open(self.trail_file.clone());
+    pub fn load_map_trail(&mut self) -> Result<(), Box<dyn Error>> {
+        // TODO: get from asset server
+        let mut file_path = PathBuf::from_str("Overlay/assets").unwrap();
+        file_path.push(self.trail_file.clone());
+        let f = fs::File::open(file_path);
         match f {
             Ok(mut file) => {
                 let total_len = file.metadata()?.len();
@@ -435,6 +453,123 @@ impl Trail {
             Err(e) => error!("Failed to load trail data: {}", e),
         }
         Ok(())
+    }
+
+    fn get_perpendicular_point(p1: Vec3, p2: Vec3, distance: f32) -> (Vec3, Vec3) {
+        let mut a = p1.z - p2.z;
+        let mut b = p1.x - p2.x;
+
+        let norm = f32::sqrt(a * a + b * b);
+        a = a / norm;
+        b /= norm;
+
+        let mut out1 = Vec3::ZERO;
+        let mut out2 = Vec3::ZERO;
+
+        out1.x = p2.x - a * distance;
+        out1.z = p2.z + b * distance;
+        out1.y = p2.y;
+
+        out2.x = p2.x + a * distance;
+        out2.z = p2.z - b * distance;
+        out2.y = p2.y;
+
+        (out1, out2)
+    }
+
+    pub fn generate_meshes(&self) -> Vec<Mesh> {
+        let mut meshes = vec![];
+        let mut vertices = vec![];
+        let mut indices = vec![];
+        let width = 0.5;
+        let mut current_index = 0;
+
+        let mut prev_data: Option<Vec3> = None;
+        let mut prev_p1 = Vec3::ZERO;
+        let mut prev_p2 = Vec3::ZERO;
+        self.trail_data.iter().for_each(|trail| {
+            let current_data = Vec3::new(trail.x, trail.y, -trail.z);
+            if current_data.x as i32 == 0
+                && current_data.y as i32 == 0
+                && current_data.z as i32 == 0
+            {
+                if vertices.len() > 0 && indices.len() > 0 {
+                    let mesh = create_mesh(vertices.clone(), indices.clone());
+                    meshes.push(mesh);
+                    vertices.clear();
+                    indices.clear();
+                    current_index = 0;
+                    prev_data = None;
+                }
+                return (); // continue
+            }
+            match prev_data {
+                Some(prev_data) => {
+                    vertices.push(Vertex::new(prev_p1, Vec3::ONE, Vec2::new(0.0, 0.0)));
+                    vertices.push(Vertex::new(prev_p2, Vec3::ONE, Vec2::new(1.0, 0.0)));
+                    (prev_p1, prev_p2) =
+                        Trail::get_perpendicular_point(prev_data, current_data, width);
+                    let distance = prev_data.distance(current_data);
+                    let frac = (1.0f32.max(distance / width) + 0.5) as f32;
+                    vertices.push(Vertex::new(prev_p2, Vec3::ONE, Vec2::new(1.0, frac)));
+                    vertices.push(Vertex::new(prev_p1, Vec3::ONE, Vec2::new(0.0, frac)));
+                    indices.push(current_index);
+                    indices.push(current_index + 1);
+                    indices.push(current_index + 2);
+                    indices.push(current_index + 2);
+                    indices.push(current_index + 3);
+                    indices.push(current_index);
+                    current_index += 4;
+                }
+                None => {
+                    // Set initial starting points from where to build the trail mesh
+                    prev_p1 = Vec3::from_array([trail.x - width, trail.y, trail.z]);
+                    prev_p2 = Vec3::from_array([trail.x + width, trail.y, trail.z]);
+                }
+            }
+            prev_data = Some(current_data);
+        });
+        if vertices.len() > 0 && indices.len() > 0 {
+            let mesh = create_mesh(vertices, indices);
+            meshes.push(mesh);
+        }
+        meshes
+    }
+}
+
+fn create_mesh(vertices: Vec<Vertex>, indices: Vec<u32>) -> Mesh {
+    let mut cube_mesh = Mesh::new(PrimitiveTopology::TriangleList);
+    cube_mesh.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vertices.iter().map(|v| v.pos).collect::<Vec<Vec3>>(),
+    );
+    //cube_mesh.insert_attribute(
+    //    Mesh::ATTRIBUTE_COLOR,
+    //    vertices.iter().map(|v| v.color).collect::<Vec<Vec3>>(),
+    //);
+    cube_mesh.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        vertices.iter().map(|v| v.tex_coord).collect::<Vec<Vec2>>(),
+    );
+
+    cube_mesh.set_indices(Some(Indices::U32(indices)));
+    cube_mesh
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct Vertex {
+    pos: Vec3,
+    color: Vec3,
+    tex_coord: Vec2,
+}
+
+impl Vertex {
+    pub fn new(pos: Vec3, color: Vec3, tex_coord: Vec2) -> Self {
+        Self {
+            pos,
+            color,
+            tex_coord,
+        }
     }
 }
 
@@ -556,6 +691,8 @@ mod tests {
             poi.get_icon_file().unwrap().to_str().unwrap(),
             r"Data\Karkasymbol.png"
         );
+
+        assert_eq!(overlay_data.pois.trail_list.len(), 1);
     }
 
     #[test]
