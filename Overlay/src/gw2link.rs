@@ -265,10 +265,13 @@ impl GW2Link {
             timeout = Duration::from_millis(200);
         } else {
             timeout = Duration::from_nanos(1);
+            self.socket.set_nonblocking(true).unwrap();
         }
         self.socket.set_read_timeout(Some(timeout)).unwrap();
         const STRUCT_SIZE: usize = size_of::<LinkedMemNet>();
+
         let mut data: [u8; STRUCT_SIZE] = [0; STRUCT_SIZE];
+        // clear cache
 
         let recv = self.socket.recv(&mut data);
         match recv {
@@ -296,14 +299,13 @@ impl GW2Link {
                 }
             }
 
-            Err(e) => println!("Error in update gw2: {e}"),
+            Err(e) => (), //println!("Error in update gw2: {e}"),
         }
         false
     }
 
     pub fn get_gw2_data(&self) -> Box<LinkedMem> {
         let copy: LinkedMem = unsafe { (*self.gw2_data.mem).clone() };
-        println!("{:?}", copy.get_identity());
         Box::new(copy)
     }
 }

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::Display,
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, RwLock},
 };
@@ -9,6 +10,21 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 type MarkerCategoryContainer = Arc<RwLock<MarkerCategory>>;
 type PoiContainer = Arc<RwLock<POI>>;
+
+fn deserialize_option_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let p = Option::<String>::deserialize(deserializer)?;
+    println!("Before: {:?}", p);
+    let p = match p {
+        Some(p) => Some(PathBuf::from(p.replace(r"\", "/"))),
+        None => None,
+    };
+    println!("After: {:?}", p);
+
+    Ok(p)
+}
 
 fn deserialize_marker_category_hashmap<'de, D>(
     deserializer: D,
@@ -65,11 +81,9 @@ pub struct MarkerCategory {
         deserialize_with = "deserialize_marker_category_hashmap"
     )]
     pub children: HashMap<String, MarkerCategoryContainer>,
-    #[serde(skip)]
-    pub parent: Option<MarkerCategoryContainer>,
     //children: Option<Vec<MarkerCategory>>,
     #[serde(flatten)]
-    pub data: InheritablePOIData,
+    pub data: POI,
 }
 
 impl MarkerCategory {
@@ -112,21 +126,7 @@ impl MarkerCategory {
 }
 
 pub trait PoiTrait {
-    fn get_inheritable_data(&self) -> InheritablePOIData {
-        let mut merged_data = self.get_own_inheritable_data();
-        match &self.get_parent_category() {
-            Some(parent) => {
-                let parent_data = parent.read().unwrap().get_inheritable_data();
-                merged_data.merge(&parent_data);
-            }
-            None => (),
-        }
-
-        merged_data
-    }
-
     fn get_parent_category(&self) -> Option<MarkerCategoryContainer>;
-    fn get_own_inheritable_data(&self) -> InheritablePOIData;
     fn set_parent(&mut self, parent: Option<MarkerCategoryContainer>);
 
     fn get_parent(&self) -> Option<MarkerCategoryContainer>;
@@ -134,19 +134,15 @@ pub trait PoiTrait {
 
 impl PoiTrait for MarkerCategory {
     fn get_parent_category(&self) -> Option<MarkerCategoryContainer> {
-        self.parent.clone()
-    }
-
-    fn get_own_inheritable_data(&self) -> InheritablePOIData {
-        self.data.clone()
+        self.data.get_parent_category()
     }
 
     fn set_parent(&mut self, parent: Option<MarkerCategoryContainer>) {
-        self.parent = parent;
+        self.data.set_parent(parent);
     }
 
     fn get_parent(&self) -> Option<MarkerCategoryContainer> {
-        self.parent.clone()
+        self.data.get_parent()
     }
 }
 
@@ -165,12 +161,7 @@ impl OverlayData {
     pub fn fill_poi_parents(&mut self) {
         self.pois.poi_list.iter_mut().for_each(|poi| {
             self.marker_category.iter().for_each(|category| {
-                let category_name = poi
-                    .read()
-                    .unwrap()
-                    .get_own_inheritable_data()
-                    .poi_type
-                    .clone();
+                let category_name = poi.read().unwrap().poi_type.clone();
                 println!("Name: {:?}", category_name);
                 // TODO: I hate it! Check if the whole name is in marker_category. If not pass the seond
                 // part to get_category_children
@@ -261,19 +252,15 @@ pub struct Position {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct InheritablePOIData {
-    #[serde(rename = "type")]
-    pub poi_type: Option<String>,
+struct InheritablePOIData {
     #[serde(
         default,
         rename = "MapID",
         deserialize_with = "deserialize_option_string_to_number"
     )]
     pub map_id: Option<i32>,
-    #[serde(flatten)]
-    pub pos: Option<Position>,
     #[serde(rename = "iconFile")]
-    pub icon_file: Option<String>,
+    pub icon_file: Option<PathBuf>,
     pub guid: Option<String>,
     #[serde(
         default,
@@ -321,9 +308,7 @@ pub struct InheritablePOIData {
 
 impl InheritablePOIData {
     fn merge(&mut self, other: &InheritablePOIData) {
-        self.poi_type = self.poi_type.clone().or(other.poi_type.clone());
         self.map_id = self.map_id.or(other.map_id);
-        self.pos = self.pos.clone().or(other.pos.clone());
         self.icon_file = self.icon_file.clone().or(other.icon_file.clone());
         self.guid = self.guid.clone().or(other.guid.clone());
         self.icon_size = self.icon_size.or(other.icon_size);
@@ -346,11 +331,32 @@ impl InheritablePOIData {
     }
 }
 
+pub enum PoiType {
+    Trail(Trail),
+    POI(POI),
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+struct Trail {
+    #[serde(rename = "trailData")]
+    trail_data: PathBuf,
+    texture: PathBuf,
+    color: Option<String>,
+    #[serde(rename = "animSpeed")]
+    anim_speed: f32,
+    #[serde(flatten)]
+    poi: POI,
+}
+
 // TODO: are POI and MarkerCategory effectively the same?
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct POI {
+    #[serde(rename = "type")]
+    pub poi_type: Option<String>,
     #[serde(flatten)]
-    inheritable_data: InheritablePOIData,
+    pub pos: Position,
+    #[serde(flatten)]
+    data: InheritablePOIData,
     #[serde(skip)]
     parent: Option<MarkerCategoryContainer>,
     #[serde(skip)]
@@ -358,10 +364,6 @@ pub struct POI {
 }
 
 impl PoiTrait for POI {
-    fn get_own_inheritable_data(&self) -> InheritablePOIData {
-        self.inheritable_data.clone()
-    }
-
     fn get_parent_category(&self) -> Option<MarkerCategoryContainer> {
         self.parent.clone()
     }
@@ -374,6 +376,26 @@ impl PoiTrait for POI {
     }
 }
 
+macro_rules! getter_setter_poi {
+    ($field: expr, $type: ty) => {
+        paste::paste! {
+            pub fn [<get_ $field>](&self) -> Option<$type>{
+                match self.data.clone().$field {
+                    Some(data) => Some(data),
+                    None => match self.parent.clone() {
+                        Some(parent) => parent.read().unwrap().data.[<get_ $field>](),
+                        None => None,
+                    },
+                }
+            }
+
+            pub fn [<set_ $field>](&mut self, data: Option<$type>) {
+                self.data.$field = data;
+            }
+        }
+    };
+}
+
 impl POI {
     // Creates a new POI
     fn new(parent: Option<MarkerCategoryContainer>) -> Self {
@@ -384,9 +406,13 @@ impl POI {
         return poi;
     }
 
-    fn set_inheritable_data(&mut self, data: InheritablePOIData) {
-        self.inheritable_data = data;
+    fn set_data(&mut self, data: InheritablePOIData) {
+        self.data = data;
     }
+
+    getter_setter_poi!(icon_file, PathBuf);
+    getter_setter_poi!(map_id, i32);
+    getter_setter_poi!(display_name, String);
 }
 
 //std::shared_ptr<POI> get_child(const std::string& name);
@@ -603,17 +629,17 @@ mod tests {
         let parent = parent_opt.unwrap();
         assert_eq!(parent.read().unwrap().name, "Karka1");
 
-        let poi_data = overlay_data.pois.poi_list[0]
-            .read()
-            .unwrap()
-            .get_inheritable_data();
+        let poi = overlay_data.pois.poi_list[0].read().unwrap();
 
-        assert_eq!(poi_data.map_id.unwrap(), 50);
+        assert_eq!(poi.get_map_id().unwrap(), 50);
         assert_eq!(
-            poi_data.poi_type.unwrap(),
+            poi.poi_type.clone().unwrap(),
             "collectible.LionArchKarka.Part1.Karka1"
         );
-        assert_eq!(poi_data.icon_file.unwrap(), r"Data\KarkasymbolEnd1.png");
+        assert_eq!(
+            poi.get_icon_file().unwrap().to_str().unwrap(),
+            r"Data\Karkasymbol.png"
+        );
     }
 
     #[test]
@@ -623,7 +649,7 @@ mod tests {
         };
         let category = Arc::new(RwLock::new(MarkerCategory::new()));
         let category2 = Arc::new(RwLock::new(MarkerCategory::new()));
-        category2.write().unwrap().parent = Some(category.clone());
+        category2.write().unwrap().data.parent = Some(category.clone());
 
         category
             .write()
@@ -634,7 +660,7 @@ mod tests {
         category.write().unwrap().name = "category".into();
 
         let mut poi = POI::new(Some(category2));
-        poi.inheritable_data.poi_type = Some("category.category2".into());
+        poi.poi_type = Some("category.category2".into());
 
         overlay_data.marker_category.push(category);
         overlay_data.pois.poi_list.push(Arc::new(RwLock::new(poi)));
@@ -651,26 +677,40 @@ mod tests {
     #[test]
     fn inherit_test() {
         let category = Arc::new(RwLock::new(MarkerCategory::new()));
-        category.write().unwrap().data = InheritablePOIData {
+        category.write().unwrap().data = POI {
             ..Default::default()
         };
-        category.write().unwrap().data.icon_file = Some("test_file".into());
-        category.write().unwrap().data.display_name = Some("parent_name".into());
+        category
+            .write()
+            .unwrap()
+            .data
+            .set_icon_file(Some("test_file".into()));
+        category
+            .write()
+            .unwrap()
+            .data
+            .set_display_name(Some("parent_name".into()));
         let category2 = Arc::new(RwLock::new(MarkerCategory::new()));
-        category2.write().unwrap().parent = Some(category);
+        category.write().unwrap().name = "category2".into();
+        category2.write().unwrap().name = "category2".into();
+        category2.write().unwrap().data.parent = Some(category);
 
         let mut poi = POI::new(Some(category2));
 
-        assert_eq!(poi.get_inheritable_data().icon_file.unwrap(), "test_file");
+        assert!(poi.parent.is_some());
+        let parent_arc = poi.parent.clone().unwrap();
+        let parent = parent_arc.read().unwrap();
+        assert_eq!(parent.name, "category2");
+
         assert_eq!(
-            poi.get_inheritable_data().display_name.unwrap(),
-            "parent_name"
+            parent.data.get_icon_file().unwrap().to_str().unwrap(),
+            "test_file"
         );
 
-        poi.inheritable_data.display_name = Some("child_name".into());
-        assert_eq!(
-            poi.get_inheritable_data().display_name.unwrap(),
-            "child_name"
-        );
+        assert_eq!(poi.get_icon_file().unwrap().to_str().unwrap(), "test_file");
+        assert_eq!(poi.get_display_name().unwrap(), "parent_name");
+
+        poi.set_display_name(Some("child_name".into()));
+        assert_eq!(poi.get_display_name().unwrap(), "child_name");
     }
 }

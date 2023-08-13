@@ -18,6 +18,9 @@ use gw2poi::{PoiTrait, POI};
 
 use crate::gw2poi::OverlayData;
 
+// Trait for extending std::path::PathBuf
+use path_slash::PathBufExt as _;
+
 #[derive(Component)]
 struct GlobalState {
     gw2link: GW2Link,
@@ -72,6 +75,7 @@ fn update_gw2(
 ) {
     let before = Instant::now();
     while global_state_query.single_mut().gw2link.update_gw2(false) {}
+    //global_state_query.single_mut().gw2link.update_gw2(false);
     let after = Instant::now();
     let data = global_state_query.single_mut().gw2link.get_gw2_data();
 
@@ -333,16 +337,26 @@ fn load_poi(
     overlay_data.fill_poi_parents();
 
     overlay_data.pois.poi_list.iter().for_each(|poi| {
-        let data = poi.read().unwrap().get_inheritable_data();
-        println!("{:#?}", data);
         //let tex_file = data.icon_file.unwrap();
-        let texture_handle = asset_server.load("test.png");
-        let pos = data.pos.unwrap();
+        let poi = poi.read().unwrap();
+        let texture_handle = asset_server.load(
+            poi.get_icon_file()
+                .unwrap()
+                .to_string_lossy()
+                .replace(r"\", "/"),
+        );
         commands.spawn((BillboardTextureBundle {
             texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
             mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
-            transform: Transform::from_xyz(pos.xpos, pos.ypos, -pos.zpos),
+            transform: Transform::from_xyz(poi.pos.xpos, poi.pos.ypos, -poi.pos.zpos),
             ..default()
         },));
     });
 }
+
+#[derive(Component)]
+struct BevyPOI {
+    poi: POI,
+}
+
+impl BevyPOI {}
