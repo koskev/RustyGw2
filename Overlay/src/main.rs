@@ -1,183 +1,115 @@
 //! This example shows various ways to configure texture materials in 3D.
 
-use std::{f32::consts::PI, ptr::null};
+use std::{f32::consts::PI, fs, time::Instant};
 
 use bevy::{
-    ecs::system::SystemState,
-    prelude::*,
-    window::{Window, WindowLevel, WindowResolution},
+    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    prelude::{shape::Quad, *},
+    window::PresentMode,
 };
+use bevy_mod_billboard::prelude::*;
 
 mod gw2link;
+mod gw2poi;
 mod processutils;
 
 use gw2link::GW2Link;
-use x11::{
-    xlib::{
-        CWBackPixmap, CWBorderPixel, CWColormap, CWEventMask, InputOutput, NoEventMask, TrueColor,
-        Visual, XCreateGC, XCreateWindow, XDefaultRootWindow, XDefaultScreen, XGCValues,
-        XMatchVisualInfo, XOpenDisplay, XSetWindowAttributes, XVisualInfo, GC,
-    },
-    xlib_xcb::XGetXCBConnection,
-};
-use xcb::x::{self, CwMask, EventMask};
+use gw2poi::{PoiTrait, POI};
+
+use crate::gw2poi::OverlayData;
 
 #[derive(Component)]
 struct GlobalState {
     gw2link: GW2Link,
 }
 
-fn create_window() {
-    let x = 1;
-    let y = 1;
-    let w = 0;
-    let h = 0;
+#[derive(Component)]
+struct Gw2Camera;
 
-    //let display = unsafe { XOpenDisplay(null()) };
+#[derive(Component)]
+struct DebugText;
 
-    //let visual: *mut Visual = null::<Visual>() as *mut Visual;
-    //let mut visual_info: XVisualInfo = XVisualInfo {
-    //    visual,
-    //    visualid: 0,
-    //    screen: 0,
-    //    depth: 0,
-    //    class: 0,
-    //    red_mask: 0,
-    //    green_mask: 0,
-    //    blue_mask: 0,
-    //    colormap_size: 0,
-    //    bits_per_rgb: 0,
-    //};
-    //unsafe {
-    //    XMatchVisualInfo(
-    //        display,
-    //        XDefaultScreen(display),
-    //        32,
-    //        TrueColor,
-    //        &mut visual_info,
-    //    );
-    //}
+#[derive(Component)]
+struct FpsText;
 
-    //let mut attr: XSetWindowAttributes = XSetWindowAttributes {
-    //    background_pixmap: 0, // "None" in my C code
-    //    background_pixel: 0,
-    //    border_pixmap: 0,
-    //    border_pixel: 0,
-    //    bit_gravity: 0,
-    //    win_gravity: 0,
-    //    backing_store: 0,
-    //    backing_planes: 0,
-    //    backing_pixel: 0,
-    //    save_under: 0,
-    //    event_mask: NoEventMask,
-    //    do_not_propagate_mask: 0,
-    //    override_redirect: 0,
-    //    colormap: 0,
-    //    cursor: 0,
-    //};
-
-    //let window = unsafe {
-    //    XCreateWindow(
-    //        display,
-    //        XDefaultRootWindow(display),
-    //        x,
-    //        y,
-    //        w,
-    //        h,
-    //        0,
-    //        visual_info.depth,
-    //        InputOutput as u32,
-    //        visual_info.visual,
-    //        CWColormap | CWEventMask | CWBackPixmap | CWBorderPixel,
-    //        &mut attr,
-    //    )
-    //};
-    //let gc = unsafe { XCreateGC(display, window, 0, null::<XGCValues>() as *mut XGCValues) };
-    let mut base_event_mask = EventMask::empty();
-    base_event_mask.set(EventMask::EXPOSURE, true);
-    base_event_mask.set(EventMask::STRUCTURE_NOTIFY, true);
-    base_event_mask.set(EventMask::PROPERTY_CHANGE, true);
-    base_event_mask.set(EventMask::FOCUS_CHANGE, true);
-
-    let mut transparent_input_mask = EventMask::from(base_event_mask);
-    transparent_input_mask.set(EventMask::VISIBILITY_CHANGE, true);
-    transparent_input_mask.set(EventMask::RESIZE_REDIRECT, true);
-    transparent_input_mask.set(EventMask::SUBSTRUCTURE_REDIRECT, true);
-    transparent_input_mask.set(EventMask::COLOR_MAP_CHANGE, true);
-    transparent_input_mask.set(EventMask::OWNER_GRAB_BUTTON, true);
-
-    let mut cw_mask = CwMask::empty();
-    cw_mask.set(CwMask::OVERRIDE_REDIRECT, true);
-    cw_mask.set(CwMask::EVENT_MASK, true);
-
-    let (conn, screen_num) = xcb::Connection::connect(None).unwrap();
-
-    let setup = conn.get_setup();
-    let screen = setup.roots().nth(screen_num as usize).unwrap();
-    let window: x::Window = conn.generate_id();
-
-    let cookie = conn.send_request_checked(&x::CreateWindow {
-        depth: x::COPY_FROM_PARENT as u8,
-        wid: window,
-        parent: screen.root(),
-        x: 0,
-        y: 0,
-        width: 150,
-        height: 150,
-        border_width: 5,
-        class: x::WindowClass::InputOutput,
-        visual: screen.root_visual(),
-        // this list must be in same order than `Cw` enum order
-        value_list: &[
-            x::Cw::BackPixmap(x::BACKPIXMAP_NONE),
-            //x::Cw::BackPixel(screen.black_pixel()),
-            x::Cw::BorderPixel(0),
-            x::Cw::EventMask(transparent_input_mask),
-            x::Cw::Colormap(screen.default_colormap()),
-        ],
-    });
-    conn.check_request(cookie).unwrap();
-
-    // We now show ("map" in X terminology) the window.
-    // This time we do not check for success, so we discard the cookie.
-    conn.send_request(&x::MapWindow { window });
-
-    conn.flush().unwrap();
-}
-
-struct MyPlugin {}
-
-impl Plugin for MyPlugin {
-    fn build(&self, app: &mut App) {
-        let mut state = SystemState::<Commands>::from_world(&mut app.world);
-
-        let commands = state.get_mut(&mut app.world);
-
-        //let (display, window) = custom_window::create_window();
-    }
-}
+#[derive(Component)]
+struct DebugObject;
 
 fn main() {
-    //create_window();
-
-    //let pid = processutils::find_wine_process("GW2-64.exe");
-    //println!("Got pid {:?}", pid);
-    //processutils::start_gw2_helper(pid.unwrap(), "/tmp/mumble.exe");
+    let pid = processutils::find_wine_process("GW2-64.exe");
+    println!("Got pid {:?}", pid);
+    processutils::start_gw2_helper(pid.unwrap(), "/tmp/mumble.exe");
 
     // TODO: instead of own plugin just change the attributes etc. of the existing window by
     // getting the raw handle
     App::new()
         .add_systems(Startup, setup)
-        .add_systems(Update, rotate_camera)
-        //.add_systems(Update, update_gw2)
+        .add_systems(Startup, setup_window)
+        .add_systems(Startup, load_poi)
+        //.add_systems(Update, rotate_camera)
+        .add_systems(Update, update_gw2)
+        .add_systems(Update, (update_text_fps, update_text_debug))
+        .add_systems(Update, draw_lines)
         .insert_resource(ClearColor(Color::NONE))
         .add_plugins(DefaultPlugins.build().disable::<bevy::winit::WinitPlugin>())
         .add_plugins(custom_window_plugin::WinitPlugin)
+        .add_plugins(BillboardPlugin)
+        .add_plugins(FrameTimeDiagnosticsPlugin)
         .run();
 }
 
-fn update_gw2(mut query: Query<&mut GlobalState>, _time: Res<Time>) {
-    query.single_mut().gw2link.update_gw2(false);
+fn setup_window(mut window: Query<&mut Window>) {
+    let mut window = window.single_mut();
+
+    window.present_mode = PresentMode::AutoVsync;
+    window.resolution.set(1920.0, 1080.0);
+}
+
+fn update_gw2(
+    mut global_state_query: Query<&mut GlobalState>,
+    mut camera_query: Query<&mut Transform, With<Gw2Camera>>,
+    _time: Res<Time>,
+) {
+    let before = Instant::now();
+    while global_state_query.single_mut().gw2link.update_gw2(false) {}
+    let after = Instant::now();
+    let data = global_state_query.single_mut().gw2link.get_gw2_data();
+
+    let mut cam = camera_query.single_mut();
+    let mut camera_pos = Vec3::from_array(data.get_camera_pos());
+    let mut camera_front = Vec3::from_array(data.get_camera_front());
+
+    camera_pos.z *= -1.0;
+    camera_front.z *= -1.0;
+    let transform = Transform::from_matrix(bevy::math::f32::Mat4::look_at_lh(
+        camera_pos,
+        camera_pos + camera_front,
+        Vec3::Y,
+    ));
+
+    //*cam = transform;
+    //cam.translation = transform.translation;
+    //cam.translation.x *= -1.0;
+    //cam.translation.y *= -1.0;
+    //cam.translation.z *= -1.0;
+    //cam.rotation = transform.rotation;
+    //cam.scale = transform.scale;
+    cam.translation = camera_pos;
+    //cam.look_to(camera_front, Vec3::Y);
+    let back = -camera_front.normalize();
+    let up = Vec3::Y;
+    let right = up.cross(back).normalize();
+    let up = back.cross(right).normalize();
+    let rotation_mat = Mat3::from_cols(right, up, back);
+    let rotation_quat = Quat::from_mat3(&rotation_mat);
+    cam.rotation = rotation_quat;
+    //cam.translation.x *= -1.0;
+
+    let top = Vec3::from_array(data.camera_top);
+    //println!(
+    //    "Pos: {} Front: {} Rotation: {} Top {}",
+    //    cam.translation, camera_front, cam.rotation, top
+    //);
 }
 
 /// sets up a scene with textured entities
@@ -186,6 +118,7 @@ fn setup(
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut billboard_textures: ResMut<Assets<BillboardTexture>>,
 ) {
     let link = GW2Link::new().unwrap();
     let state = GlobalState { gw2link: link };
@@ -246,19 +179,170 @@ fn setup(
     commands.spawn(PbrBundle {
         mesh: quad_handle,
         material: blue_material_handle,
-        transform: Transform::from_xyz(0.0, 0.0, -1.5)
+        transform: Transform::from_xyz(0.0, 1.0, -1.5)
             .with_rotation(Quat::from_rotation_x(-PI / 5.0)),
         ..default()
     });
-    // camera
-    commands.spawn(Camera3dBundle {
-        transform: Transform::from_xyz(3.0, 5.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
+
+    let texture_handle = asset_server.load("rust-logo-256x256.png");
+    commands.spawn((
+        BillboardTextureBundle {
+            texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
+            mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
+            transform: Transform::from_xyz(0.0, 0.0, 0.0),
+            ..default()
+        },
+        DebugObject,
+    ));
+
+    //commands.spawn((BillboardTextureBundle {
+    //    texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
+    //    mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
+    //    transform: Transform::from_xyz(-73.0, 28.0, 211.0),
+    //    ..default()
+    //},));
+
+    commands.spawn((BillboardTextureBundle {
+        texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
+        mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
+        transform: Transform::from_xyz(-73.0, 28.0, -211.0),
         ..default()
-    });
+    },));
+
+    commands.spawn((
+        // Create a TextBundle that has a Text with a single section.
+        TextBundle::from_section(
+            // Accepts a `String` or any type that converts into a `String`, such as `&str`
+            "hello\nbevy!",
+            TextStyle {
+                font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                font_size: 100.0,
+                color: Color::WHITE,
+            },
+        ) // Set the alignment of the Text
+        .with_text_alignment(TextAlignment::Center)
+        // Set the style of the TextBundle itself.
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(5.0),
+            right: Val::Px(15.0),
+            ..default()
+        }),
+        DebugText,
+    ));
+
+    // Text with multiple sections
+    commands.spawn((
+        // Create a TextBundle that has a Text with a list of sections.
+        TextBundle::from_sections([
+            TextSection::new(
+                "FPS: ",
+                TextStyle {
+                    font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                    font_size: 60.0,
+                    color: Color::WHITE,
+                },
+            ),
+            TextSection::from_style(TextStyle {
+                font: asset_server.load("fonts/FiraMono-Medium.ttf"),
+                font_size: 60.0,
+                color: Color::GOLD,
+            }),
+        ]),
+        FpsText,
+    ));
+
+    // camera
+    let mut cam_bundle = Camera3dBundle::default();
+    let mut projection = PerspectiveProjection::default();
+    projection.fov = 1.222;
+    cam_bundle.projection = Projection::Perspective(projection);
+
+    commands.spawn((cam_bundle, Gw2Camera));
 }
 
-fn rotate_camera(mut query: Query<&mut Transform, With<Camera>>, time: Res<Time>) {
-    let mut transform = query.single_mut();
+fn update_text_fps(diagnostics: Res<DiagnosticsStore>, mut query: Query<&mut Text, With<FpsText>>) {
+    for mut text in &mut query {
+        if let Some(fps) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
+            if let Some(value) = fps.smoothed() {
+                // Update the value of the second section
+                text.sections[1].value = format!("{value:.2}");
+            }
+        }
+    }
+}
 
-    transform.rotate_around(Vec3::ZERO, Quat::from_rotation_y(time.delta_seconds() / 2.));
+fn update_text_debug(
+    camera_query: Query<&Transform, With<Gw2Camera>>,
+    obj_query: Query<&Transform, With<DebugObject>>,
+    mut text_query: Query<&mut Text, With<DebugText>>,
+) {
+    let mut text = text_query.single_mut();
+    let transform = camera_query.single();
+    let obj_transform = obj_query.single();
+    text.sections[0].value = format!(
+        "X: {:.1} Y: {:.1} Z: {:.1}\nX: {:.1} Y: {:.1} Z: {:.1}",
+        transform.translation.x,
+        transform.translation.y,
+        transform.translation.z,
+        obj_transform.translation.x,
+        obj_transform.translation.y,
+        obj_transform.translation.z
+    );
+}
+
+fn draw_lines(mut gizmos: Gizmos) {
+    for i in 0..1 {
+        gizmos.line(
+            Vec3::new(-1000.0, 0.0, (i * 10) as f32),
+            Vec3::new(1000.0, 0.0, (i * 10) as f32),
+            Color::RED,
+        );
+        gizmos.line(
+            Vec3::new(-1000.0, 0.0, (i * -10) as f32),
+            Vec3::new(1000.0, 0.0, (i * -10) as f32),
+            Color::RED,
+        );
+        gizmos.line(
+            Vec3::new((i * 10) as f32, 0.0, -1000.0),
+            Vec3::new((i * 10) as f32, 0.0, 1000.0),
+            Color::BLUE,
+        );
+        gizmos.line(
+            Vec3::new((i * -10) as f32, 0.0, -1000.0),
+            Vec3::new((i * -10) as f32, 0.0, 1000.0),
+            Color::BLUE,
+        );
+    }
+    gizmos.line(
+        Vec3::new(0.0, -1000.0, 0.0),
+        Vec3::new(0.0, 1000.0, 0.0),
+        Color::GREEN,
+    );
+}
+
+fn load_poi(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut billboard_textures: ResMut<Assets<BillboardTexture>>,
+) {
+    let data = fs::read_to_string("test.xml").unwrap();
+
+    let mut overlay_data: OverlayData = serde_xml_rs::from_str(&data).unwrap();
+    overlay_data.fill_poi_parents();
+
+    overlay_data.pois.poi_list.iter().for_each(|poi| {
+        let data = poi.read().unwrap().get_inheritable_data();
+        println!("{:#?}", data);
+        //let tex_file = data.icon_file.unwrap();
+        let texture_handle = asset_server.load("test.png");
+        let pos = data.pos.unwrap();
+        commands.spawn((BillboardTextureBundle {
+            texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
+            mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
+            transform: Transform::from_xyz(pos.xpos, pos.ypos, -pos.zpos),
+            ..default()
+        },));
+    });
 }

@@ -12,8 +12,9 @@ use bevy_utils::{tracing::warn, HashMap};
 use bevy_window::{CursorGrabMode, Window, WindowMode, WindowPosition, WindowResolution};
 
 use winit::{
-    dpi::{LogicalSize, PhysicalPosition},
+    dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Position, Size},
     monitor::MonitorHandle,
+    platform::x11::WindowBuilderExtX11,
 };
 
 use crate::{
@@ -58,44 +59,46 @@ impl WinitWindows {
             winit_window_builder
                 .with_transparent(true)
                 .with_decorations(false)
+                .with_maximized(true)
+                .with_inner_size(LogicalSize::new(1920, 1080))
                 .with_parent_window(Some(my_window))
         };
 
-        winit_window_builder = match window.mode {
-            WindowMode::BorderlessFullscreen => winit_window_builder.with_fullscreen(Some(
-                winit::window::Fullscreen::Borderless(event_loop.primary_monitor()),
-            )),
-            WindowMode::Fullscreen => {
-                winit_window_builder.with_fullscreen(Some(winit::window::Fullscreen::Exclusive(
-                    get_best_videomode(&event_loop.primary_monitor().unwrap()),
-                )))
-            }
-            WindowMode::SizedFullscreen => winit_window_builder.with_fullscreen(Some(
-                winit::window::Fullscreen::Exclusive(get_fitting_videomode(
-                    &event_loop.primary_monitor().unwrap(),
-                    window.width() as u32,
-                    window.height() as u32,
-                )),
-            )),
-            WindowMode::Windowed => {
-                if let Some(position) = winit_window_position(
-                    &window.position,
-                    &window.resolution,
-                    event_loop.available_monitors(),
-                    event_loop.primary_monitor(),
-                    None,
-                ) {
-                    winit_window_builder = winit_window_builder.with_position(position);
-                }
+        //winit_window_builder = match window.mode {
+        //    WindowMode::BorderlessFullscreen => winit_window_builder.with_fullscreen(Some(
+        //        winit::window::Fullscreen::Borderless(event_loop.primary_monitor()),
+        //    )),
+        //    WindowMode::Fullscreen => {
+        //        winit_window_builder.with_fullscreen(Some(winit::window::Fullscreen::Exclusive(
+        //            get_best_videomode(&event_loop.primary_monitor().unwrap()),
+        //        )))
+        //    }
+        //    WindowMode::SizedFullscreen => winit_window_builder.with_fullscreen(Some(
+        //        winit::window::Fullscreen::Exclusive(get_fitting_videomode(
+        //            &event_loop.primary_monitor().unwrap(),
+        //            window.width() as u32,
+        //            window.height() as u32,
+        //        )),
+        //    )),
+        //    WindowMode::Windowed => {
+        //        if let Some(position) = winit_window_position(
+        //            &window.position,
+        //            &window.resolution,
+        //            event_loop.available_monitors(),
+        //            event_loop.primary_monitor(),
+        //            None,
+        //        ) {
+        //            winit_window_builder = winit_window_builder.with_position(position);
+        //        }
 
-                let logical_size = LogicalSize::new(window.width(), window.height());
-                if let Some(sf) = window.resolution.scale_factor_override() {
-                    winit_window_builder.with_inner_size(logical_size.to_physical::<f64>(sf))
-                } else {
-                    winit_window_builder.with_inner_size(logical_size)
-                }
-            }
-        };
+        //        let logical_size = LogicalSize::new(window.width(), window.height());
+        //        if let Some(sf) = window.resolution.scale_factor_override() {
+        //            winit_window_builder.with_inner_size(logical_size.to_physical::<f64>(sf))
+        //        } else {
+        //            winit_window_builder.with_inner_size(logical_size)
+        //        }
+        //    }
+        //};
 
         winit_window_builder = winit_window_builder
             .with_window_level(convert_window_level(window.window_level))

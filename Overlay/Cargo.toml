@@ -1,5 +1,5 @@
 [package]
-name = "RustyGw2"
+name = "RustyGw2-Overlay"
 version = "0.1.0"
 edition = "2021"
 #workspace = ".."
@@ -13,3 +13,10 @@ static_assertions = "1.1.0"
 x11 = { version = "2.21.0", features = ["xfixes", "xlib", "xlib_xcb"] }
 xcb = { version = "1.2.2", features = ["xfixes", "xlib_xcb"] }
 custom_window_plugin = { version = "0.11.0", path = "../custom_window_plugin" }
+bevy_framepace = "0.13.3"
+bevy_mod_billboard = "0.4.0"
+glm = "0.2.3"
+serde = { version = "1.0.183", features = ["derive"] }
+serde-xml-rs = "0.6.0"
+serde-aux = "4.2.0"
+serde_path_to_error = "0.1.14"

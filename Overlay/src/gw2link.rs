@@ -27,7 +27,7 @@ pub enum UiState {
 }
 
 #[repr(C, packed)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct LinkedMem {
     pub ui_version: u32,
     pub ui_tick: u32,
@@ -258,7 +258,7 @@ impl GW2Link {
         UdpSocket::bind("127.0.0.1:7070")
     }
 
-    pub fn update_gw2(&mut self, block: bool) {
+    pub fn update_gw2(&mut self, block: bool) -> bool {
         let loop_begin = Instant::now();
         let timeout;
         if block {
@@ -269,10 +269,11 @@ impl GW2Link {
         self.socket.set_read_timeout(Some(timeout)).unwrap();
         const STRUCT_SIZE: usize = size_of::<LinkedMemNet>();
         let mut data: [u8; STRUCT_SIZE] = [0; STRUCT_SIZE];
+
         let recv = self.socket.recv(&mut data);
         match recv {
             Ok(size) => {
-                println!("Got data");
+                //println!("Got data");
                 if size == STRUCT_SIZE {
                     let mem_net: LinkedMemNet = unsafe { std::mem::transmute(data) };
                     unsafe {
@@ -285,10 +286,11 @@ impl GW2Link {
                             println!("UiTick is 0. If this message doesn't stop, make sure the mumble script is running!");
                         }
                     }
-                    let time = last_update - loop_begin;
+                    let _time = last_update - loop_begin;
                     self.last_update = last_update;
                     //ffic::rust_set_time("link".to_string(), time.as_micros() as u64);
                     //TODO: PerformanceStats::getInstance().set_time("link", time.count());
+                    return true;
                 } else {
                     println!("Got wrong size. Got {} expected {}", size, STRUCT_SIZE);
                 }
@@ -296,10 +298,12 @@ impl GW2Link {
 
             Err(e) => println!("Error in update gw2: {e}"),
         }
+        false
     }
 
     pub fn get_gw2_data(&self) -> Box<LinkedMem> {
         let copy: LinkedMem = unsafe { (*self.gw2_data.mem).clone() };
+        println!("{:?}", copy.get_identity());
         Box::new(copy)
     }
 }

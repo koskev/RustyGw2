@@ -1,5 +1,6 @@
 //! This example shows various ways to configure texture materials in 3D.
 
+use bevy_utils::Duration;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle, XcbDisplayHandle, XcbWindowHandle};
 use x11::{
     xlib::{
@@ -72,17 +73,17 @@ pub fn create_window() -> (RawDisplayHandle, RawWindowHandle) {
         depth: depth.depth(),
         wid: window,
         parent: screen.root(),
-        x: 0,
+        x: 1680,
         y: 0,
-        width: 1000,
-        height: 600,
+        width: 1920,
+        height: 1080,
         border_width: 0,
         class: x::WindowClass::InputOutput,
         visual: visual.visual_id(),
         // this list must be in same order than `Cw` enum order
         value_list: &[
             x::Cw::BackPixmap(x::BACKPIXMAP_NONE),
-            x::Cw::BackPixel(screen.white_pixel()),
+            x::Cw::BackPixel(0x808080),
             x::Cw::BorderPixel(0),
             x::Cw::OverrideRedirect(true),
             x::Cw::EventMask(transparent_input_mask),
@@ -108,7 +109,8 @@ pub fn create_window() -> (RawDisplayHandle, RawWindowHandle) {
     {
         let conn = conn.clone();
         thread::spawn(move || loop {
-            conn.wait_for_event().unwrap();
+            let event = conn.wait_for_event().unwrap();
+            println!("Event: {:?}", event);
         });
     }
 
