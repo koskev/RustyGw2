@@ -1,6 +1,7 @@
 //! This example shows various ways to configure texture materials in 3D.
 
-use std::{f32::consts::PI, fs, time::Instant};
+use std::{f32::consts::PI, fs, path::Path, time::Instant};
+use walkdir::WalkDir;
 
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
@@ -14,12 +15,9 @@ mod gw2poi;
 mod processutils;
 
 use gw2link::GW2Link;
-use gw2poi::{PoiTrait, POI};
+use gw2poi::PoiContainer;
 
 use crate::gw2poi::OverlayData;
-
-// Trait for extending std::path::PathBuf
-use path_slash::PathBufExt as _;
 
 #[derive(Component)]
 struct GlobalState {
@@ -35,12 +33,17 @@ struct DebugText;
 #[derive(Component)]
 struct FpsText;
 
-#[derive(Component)]
-struct DebugObject;
+#[derive(Resource)]
+struct CurrentLevel(u32);
+
+#[derive(Resource)]
+struct MapData {
+    data: OverlayData,
+}
 
 fn main() {
     let pid = processutils::find_wine_process("GW2-64.exe");
-    println!("Got pid {:?}", pid);
+    info!("Got pid {:?}", pid);
     processutils::start_gw2_helper(pid.unwrap(), "/tmp/mumble.exe");
 
     // TODO: instead of own plugin just change the attributes etc. of the existing window by
@@ -48,16 +51,18 @@ fn main() {
     App::new()
         .add_systems(Startup, setup)
         .add_systems(Startup, setup_window)
-        .add_systems(Startup, load_poi)
         //.add_systems(Update, rotate_camera)
         .add_systems(Update, update_gw2)
         .add_systems(Update, (update_text_fps, update_text_debug))
-        .add_systems(Update, draw_lines)
+        //.add_systems(Update, draw_lines)
+        .add_systems(Update, map_change_event)
         .insert_resource(ClearColor(Color::NONE))
+        .insert_resource(CurrentLevel(0))
         .add_plugins(DefaultPlugins.build().disable::<bevy::winit::WinitPlugin>())
         .add_plugins(custom_window_plugin::WinitPlugin)
         .add_plugins(BillboardPlugin)
         .add_plugins(FrameTimeDiagnosticsPlugin)
+        .add_event::<MapChangeEvent>()
         .run();
 }
 
@@ -71,7 +76,8 @@ fn setup_window(mut window: Query<&mut Window>) {
 fn update_gw2(
     mut global_state_query: Query<&mut GlobalState>,
     mut camera_query: Query<&mut Transform, With<Gw2Camera>>,
-    _time: Res<Time>,
+    mut ev_map_change: EventWriter<MapChangeEvent>,
+    mut current_level_query: ResMut<CurrentLevel>,
 ) {
     let before = Instant::now();
     while global_state_query.single_mut().gw2link.update_gw2(false) {}
@@ -85,35 +91,15 @@ fn update_gw2(
 
     camera_pos.z *= -1.0;
     camera_front.z *= -1.0;
-    let transform = Transform::from_matrix(bevy::math::f32::Mat4::look_at_lh(
-        camera_pos,
-        camera_pos + camera_front,
-        Vec3::Y,
-    ));
 
-    //*cam = transform;
-    //cam.translation = transform.translation;
-    //cam.translation.x *= -1.0;
-    //cam.translation.y *= -1.0;
-    //cam.translation.z *= -1.0;
-    //cam.rotation = transform.rotation;
-    //cam.scale = transform.scale;
     cam.translation = camera_pos;
-    //cam.look_to(camera_front, Vec3::Y);
-    let back = -camera_front.normalize();
-    let up = Vec3::Y;
-    let right = up.cross(back).normalize();
-    let up = back.cross(right).normalize();
-    let rotation_mat = Mat3::from_cols(right, up, back);
-    let rotation_quat = Quat::from_mat3(&rotation_mat);
-    cam.rotation = rotation_quat;
-    //cam.translation.x *= -1.0;
+    cam.look_to(camera_front, Vec3::Y);
 
-    let top = Vec3::from_array(data.camera_top);
-    //println!(
-    //    "Pos: {} Front: {} Rotation: {} Top {}",
-    //    cam.translation, camera_front, cam.rotation, top
-    //);
+    let map_id = data.get_context().map_id;
+    if current_level_query.0 != map_id {
+        current_level_query.0 = map_id;
+        ev_map_change.send(MapChangeEvent(map_id));
+    }
 }
 
 /// sets up a scene with textured entities
@@ -128,90 +114,6 @@ fn setup(
     let state = GlobalState { gw2link: link };
     commands.spawn(state);
     // load a texture and retrieve its aspect ratio
-    let texture_handle = asset_server.load("test.png");
-    let aspect = 0.25;
-
-    // create a new quad mesh. this is what we will apply the texture to
-    let quad_width = 8.0;
-    let quad_handle = meshes.add(Mesh::from(shape::Quad::new(Vec2::new(
-        quad_width,
-        quad_width * aspect,
-    ))));
-
-    // this material renders the texture normally
-    let material_handle = materials.add(StandardMaterial {
-        base_color_texture: Some(texture_handle.clone()),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-
-    // this material modulates the texture to make it red (and slightly transparent)
-    let red_material_handle = materials.add(StandardMaterial {
-        base_color: Color::rgba(1.0, 0.0, 0.0, 0.5),
-        base_color_texture: Some(texture_handle.clone()),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-
-    // and lets make this one blue! (and also slightly transparent)
-    let blue_material_handle = materials.add(StandardMaterial {
-        base_color: Color::rgba(0.0, 0.0, 1.0, 0.5),
-        base_color_texture: Some(texture_handle),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-
-    // textured quad - normal
-    commands.spawn(PbrBundle {
-        mesh: quad_handle.clone(),
-        material: material_handle,
-        transform: Transform::from_xyz(0.0, 0.0, 1.5)
-            .with_rotation(Quat::from_rotation_x(-PI / 5.0)),
-        ..default()
-    });
-    // textured quad - modulated
-    commands.spawn(PbrBundle {
-        mesh: quad_handle.clone(),
-        material: red_material_handle,
-        transform: Transform::from_rotation(Quat::from_rotation_x(-PI / 5.0)),
-        ..default()
-    });
-    // textured quad - modulated
-    commands.spawn(PbrBundle {
-        mesh: quad_handle,
-        material: blue_material_handle,
-        transform: Transform::from_xyz(0.0, 1.0, -1.5)
-            .with_rotation(Quat::from_rotation_x(-PI / 5.0)),
-        ..default()
-    });
-
-    let texture_handle = asset_server.load("rust-logo-256x256.png");
-    commands.spawn((
-        BillboardTextureBundle {
-            texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
-            mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
-            transform: Transform::from_xyz(0.0, 0.0, 0.0),
-            ..default()
-        },
-        DebugObject,
-    ));
-
-    //commands.spawn((BillboardTextureBundle {
-    //    texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
-    //    mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
-    //    transform: Transform::from_xyz(-73.0, 28.0, 211.0),
-    //    ..default()
-    //},));
-
-    commands.spawn((BillboardTextureBundle {
-        texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
-        mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
-        transform: Transform::from_xyz(-73.0, 28.0, -211.0),
-        ..default()
-    },));
 
     commands.spawn((
         // Create a TextBundle that has a Text with a single section.
@@ -263,6 +165,26 @@ fn setup(
     cam_bundle.projection = Projection::Perspective(projection);
 
     commands.spawn((cam_bundle, Gw2Camera));
+
+    let path = Path::new("pois");
+
+    let mut overlay_data: OverlayData = OverlayData {
+        ..Default::default()
+    };
+    for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() && entry.path().extension().unwrap_or_default() == "xml" {
+            info!("Found XML file: {:?}", entry.path());
+            let file_path = entry.path().to_string_lossy().to_string();
+            let data = OverlayData::from_file(&file_path);
+            match data {
+                Ok(data) => overlay_data.merge(data),
+                Err(e) => error!("Failed to load file {} with error {}", file_path, e),
+            }
+        }
+    }
+    overlay_data.fill_poi_parents();
+    let map_data = MapData { data: overlay_data };
+    commands.insert_resource(map_data);
 }
 
 fn update_text_fps(diagnostics: Res<DiagnosticsStore>, mut query: Query<&mut Text, With<FpsText>>) {
@@ -278,20 +200,13 @@ fn update_text_fps(diagnostics: Res<DiagnosticsStore>, mut query: Query<&mut Tex
 
 fn update_text_debug(
     camera_query: Query<&Transform, With<Gw2Camera>>,
-    obj_query: Query<&Transform, With<DebugObject>>,
     mut text_query: Query<&mut Text, With<DebugText>>,
 ) {
     let mut text = text_query.single_mut();
     let transform = camera_query.single();
-    let obj_transform = obj_query.single();
     text.sections[0].value = format!(
-        "X: {:.1} Y: {:.1} Z: {:.1}\nX: {:.1} Y: {:.1} Z: {:.1}",
-        transform.translation.x,
-        transform.translation.y,
-        transform.translation.z,
-        obj_transform.translation.x,
-        obj_transform.translation.y,
-        obj_transform.translation.z
+        "X: {:.1} Y: {:.1} Z: {:.1}\n",
+        transform.translation.x, transform.translation.y, transform.translation.z,
     );
 }
 
@@ -325,38 +240,60 @@ fn draw_lines(mut gizmos: Gizmos) {
     );
 }
 
-fn load_poi(
+#[derive(Component)]
+struct BevyPOI {
+    poi: PoiContainer,
+}
+
+impl BevyPOI {}
+
+#[derive(Event)]
+struct MapChangeEvent(u32);
+
+fn map_change_event(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut billboard_textures: ResMut<Assets<BillboardTexture>>,
+    mut ev_map_change: EventReader<MapChangeEvent>,
+    pois: Query<(Entity, With<BevyPOI>)>,
+    map_data: Res<MapData>,
 ) {
-    let data = fs::read_to_string("test.xml").unwrap();
+    for event in ev_map_change.iter() {
+        let current_map: u32 = event.0;
+        info!("Changed map to {}", current_map);
+        pois.iter()
+            .for_each(|(entity, _)| commands.entity(entity).despawn());
 
-    let mut overlay_data: OverlayData = serde_xml_rs::from_str(&data).unwrap();
-    overlay_data.fill_poi_parents();
+        map_data.data.pois.poi_list.iter().for_each(|poi_lock| {
+            let poi = poi_lock.read().unwrap();
+            if current_map == poi.get_map_id().unwrap_or(0) {
+                let icon_path = poi.get_icon_file();
+                if icon_path.is_none() {
+                    error!("Poi {:?} didn't have a icon path!", poi.get_display_name());
+                    return ();
+                }
+                let texture_handle =
+                    asset_server.load(icon_path.unwrap().to_string_lossy().replace(r"\", "/"));
 
-    overlay_data.pois.poi_list.iter().for_each(|poi| {
-        //let tex_file = data.icon_file.unwrap();
-        let poi = poi.read().unwrap();
-        let texture_handle = asset_server.load(
-            poi.get_icon_file()
-                .unwrap()
-                .to_string_lossy()
-                .replace(r"\", "/"),
-        );
-        commands.spawn((BillboardTextureBundle {
-            texture: billboard_textures.add(BillboardTexture::Single(texture_handle.clone())),
-            mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
-            transform: Transform::from_xyz(poi.pos.xpos, poi.pos.ypos, -poi.pos.zpos),
-            ..default()
-        },));
-    });
+                let entity = BevyPOI {
+                    poi: poi_lock.clone(),
+                };
+                commands.spawn((
+                    BillboardTextureBundle {
+                        texture: billboard_textures
+                            .add(BillboardTexture::Single(texture_handle.clone())),
+                        mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
+                        transform: Transform::from_xyz(
+                            poi.pos.xpos,
+                            poi.pos.ypos + poi.get_height_offset().unwrap_or(0),
+                            -poi.pos.zpos,
+                        ),
+                        ..default()
+                    },
+                    entity,
+                ));
+            }
+        });
+    }
 }
-
-#[derive(Component)]
-struct BevyPOI {
-    poi: POI,
-}
-
-impl BevyPOI {}

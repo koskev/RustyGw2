@@ -1,27 +1,32 @@
 use std::{
     collections::HashMap,
+    error::Error,
     fmt::Display,
+    fs,
+    io::{Read, Seek, SeekFrom},
     path::PathBuf,
     str::FromStr,
     sync::{Arc, RwLock},
 };
 
+use byteorder::{LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Deserializer, Serialize};
 
-type MarkerCategoryContainer = Arc<RwLock<MarkerCategory>>;
-type PoiContainer = Arc<RwLock<POI>>;
+use log::error;
+
+pub type MarkerCategoryContainer = Arc<RwLock<MarkerCategory>>;
+pub type PoiContainer = Arc<RwLock<POI>>;
+pub type TrailContainer = Arc<RwLock<Trail>>;
 
 fn deserialize_option_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let p = Option::<String>::deserialize(deserializer)?;
-    println!("Before: {:?}", p);
     let p = match p {
         Some(p) => Some(PathBuf::from(p.replace(r"\", "/"))),
         None => None,
     };
-    println!("After: {:?}", p);
 
     Ok(p)
 }
@@ -63,8 +68,25 @@ fn deserialize_poi_vec<'de, D>(deserializer: D) -> Result<Vec<PoiContainer>, D::
 where
     D: Deserializer<'de>,
 {
-    let poi = Vec::<POI>::deserialize(deserializer)?;
+    let poi = Vec::<POI>::deserialize(deserializer);
+    if poi.is_err() {
+        return Ok(vec![]);
+    }
+    let poi = poi.unwrap();
     let new_vec: Vec<PoiContainer> = poi
+        .iter()
+        .map(|p| Arc::new(RwLock::new(p.clone())))
+        .collect();
+
+    Ok(new_vec)
+}
+
+fn deserialize_trail_vec<'de, D>(deserializer: D) -> Result<Vec<TrailContainer>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let trail = Vec::<Trail>::deserialize(deserializer)?;
+    let new_vec: Vec<TrailContainer> = trail
         .iter()
         .map(|p| Arc::new(RwLock::new(p.clone())))
         .collect();
@@ -97,7 +119,6 @@ impl MarkerCategory {
         let next_name = name.split_once('.');
         let pass_name;
         let child_name;
-        println!("{:?}", next_name);
         match next_name {
             Some(next_name) => {
                 child_name = next_name.0;
@@ -158,11 +179,29 @@ pub struct OverlayData {
 }
 
 impl OverlayData {
+    pub fn merge(&mut self, mut other: OverlayData) {
+        self.pois.poi_list.append(&mut other.pois.poi_list);
+        self.marker_category.append(&mut other.marker_category);
+    }
+    pub fn from_file(file_path: &str) -> Result<Self, Box<dyn Error>> {
+        let file_handle = fs::File::open(file_path).unwrap();
+
+        let mut de = serde_xml_rs::Deserializer::new_from_reader(file_handle)
+            .non_contiguous_seq_elements(true);
+        let data = OverlayData::deserialize(&mut de)?;
+        Ok(data)
+    }
+
+    pub fn from_string(data: &str) -> Self {
+        let mut de = serde_xml_rs::Deserializer::new_from_reader(data.as_bytes())
+            .non_contiguous_seq_elements(true);
+        OverlayData::deserialize(&mut de).unwrap()
+    }
+
     pub fn fill_poi_parents(&mut self) {
         self.pois.poi_list.iter_mut().for_each(|poi| {
             self.marker_category.iter().for_each(|category| {
                 let category_name = poi.read().unwrap().poi_type.clone();
-                println!("Name: {:?}", category_name);
                 // TODO: I hate it! Check if the whole name is in marker_category. If not pass the seond
                 // part to get_category_children
                 match category_name {
@@ -192,6 +231,8 @@ impl OverlayData {
 pub struct POIs {
     #[serde(rename = "POI", deserialize_with = "deserialize_poi_vec")]
     pub poi_list: Vec<PoiContainer>,
+    #[serde(rename = "Trail", deserialize_with = "deserialize_trail_vec")]
+    pub trail_list: Vec<TrailContainer>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,7 +274,6 @@ where
     <N as FromStr>::Err: Display,
 {
     let buf = String::deserialize(deserializer)?;
-    println!("Converting from {}", buf);
     let val = buf.parse::<N>();
     match val {
         Ok(v) => Ok(v),
@@ -258,7 +298,7 @@ struct InheritablePOIData {
         rename = "MapID",
         deserialize_with = "deserialize_option_string_to_number"
     )]
-    pub map_id: Option<i32>,
+    pub map_id: Option<u32>,
     #[serde(rename = "iconFile")]
     pub icon_file: Option<PathBuf>,
     pub guid: Option<String>,
@@ -331,21 +371,71 @@ impl InheritablePOIData {
     }
 }
 
+#[derive(Deserialize, Debug)]
 pub enum PoiType {
     Trail(Trail),
     POI(POI),
 }
 
+#[derive(Debug, Default, Clone)]
+struct TrailData {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
-struct Trail {
+pub struct Trail {
     #[serde(rename = "trailData")]
-    trail_data: PathBuf,
-    texture: PathBuf,
-    color: Option<String>,
+    pub trail_file: PathBuf,
+    pub texture: PathBuf,
+    pub color: Option<String>,
     #[serde(rename = "animSpeed")]
-    anim_speed: f32,
+    pub anim_speed: f32,
     #[serde(flatten)]
-    poi: POI,
+    pub poi: POI,
+
+    #[serde(skip)]
+    trail_data: Vec<TrailData>,
+}
+
+impl Trail {
+    fn load_map_trail(&mut self) -> Result<(), Box<dyn Error>> {
+        let f = fs::File::open(self.trail_file.clone());
+        match f {
+            Ok(mut file) => {
+                let total_len = file.metadata()?.len();
+                if total_len >= 8 {
+                    file.seek(SeekFrom::Start(4))?;
+                    let mut buffer = [0u8; 4];
+                    file.read_exact(&mut buffer)?;
+                    let map_id = u32::from_le_bytes(buffer);
+                    self.poi.set_map_id(Some(map_id));
+
+                    // Calculate the number of coordinates in the file
+                    let coord_size = std::mem::size_of::<TrailData>();
+                    let mut buffer = Vec::new();
+                    file.read_to_end(&mut buffer)?;
+                    let num_coords = buffer.len() / coord_size;
+
+                    // Read data from the buffer into the vector of structs
+                    for i in 0..num_coords {
+                        let offset = i * coord_size;
+                        let mut cursor = std::io::Cursor::new(&buffer[offset..offset + coord_size]);
+
+                        let x = cursor.read_f32::<LittleEndian>()?;
+                        let y = cursor.read_f32::<LittleEndian>()?;
+                        let z = cursor.read_f32::<LittleEndian>()?;
+
+                        let trail = TrailData { x, y, z };
+                        self.trail_data.push(trail);
+                    }
+                }
+            }
+            Err(e) => error!("Failed to load trail data: {}", e),
+        }
+        Ok(())
+    }
 }
 
 // TODO: are POI and MarkerCategory effectively the same?
@@ -411,187 +501,10 @@ impl POI {
     }
 
     getter_setter_poi!(icon_file, PathBuf);
-    getter_setter_poi!(map_id, i32);
+    getter_setter_poi!(map_id, u32);
     getter_setter_poi!(display_name, String);
+    getter_setter_poi!(height_offset, f32);
 }
-
-//std::shared_ptr<POI> get_child(const std::string& name);
-//static std::shared_ptr<POI> find_children(const poi_container children, const std::string& name);
-
-//// setter
-//void set_name(const std::string& name);
-//void set_map_id(int id);
-//void set_x(float val);
-//void set_y(float val);
-//void set_z(float val);
-//void set_type(const std::string& type);
-//void set_guid(const std::string& uid);
-//void set_icon_size(float val);
-//void set_icon_file(const std::string& file);
-//void set_alpha(float alpha);
-//void set_behavior(int i);
-//void set_fade_near(float fade);
-//void set_fade_far(float fade);
-//void set_height_offset(float off);
-//void set_reset_length(int len);
-//void set_display_name(const std::string& name);
-//void set_auto_trigger(bool mode);
-//void set_trigger_range(float range);
-//void set_has_countdown(bool cd);
-//void set_achievement_id(int id);
-//void set_achievement_bit(int bit);
-//void set_info(const std::string& info);
-//void set_info_range(float range);
-//void set_is_poi(bool poi);
-//void set_pos(const glm::vec3& pos);
-//void set_enabled(bool state, bool recursive = true);
-//
-//// getter
-//float get_icon_size() const;
-//std::string get_icon_file() const;
-//float get_alpha() const;
-//int get_behavior() const;
-//float get_fade_near() const;
-//float get_fade_far() const;
-//float get_height_offset() const;
-//int get_reset_length() const;
-//std::string get_display_name() const;
-//bool get_auto_trigger() const;
-//float get_trigger_range() const;
-//bool get_has_countdown() const;
-//int get_achievement_id() const;
-//int get_achievement_bit() const;
-//std::string get_info() const;
-//float get_info_range() const;
-//bool get_is_poi() const;
-//int get_map_id() const;
-//glm::vec3 get_pos() const;
-//std::string get_guid() const;
-//std::string get_name() const;
-//std::string get_type() const;
-//bool is_enabled() const;
-//
-//protected:
-//};
-//
-//typedef POI::poi_container poi_container;
-//
-//#include "POI.h"
-//
-//std::shared_ptr<POI> POI::get_child(const std::string& name_case) {
-//    std::string name = name_case;
-//    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
-//    std::vector<std::string> tokens;
-//    std::stringstream ss(name);
-//    std::string s;
-//
-//    while (std::getline(ss, s, '.')) {
-//        tokens.push_back(s);
-//    }
-//    // not a valid child token
-//    if (tokens.size() <= 1) {
-//        return nullptr;
-//    }
-//
-//    // striping own name
-//    std::string next_name = tokens[1];
-//    std::string next_string = name.substr(name.find_first_of(".") + 1);
-//    for (auto iter = this->m_children.begin(); iter != this->m_children.end(); ++iter) {
-//        // full match!
-//        if (next_string == (*iter)->m_name) {
-//            return *iter;
-//        }
-//        // partial match. search children
-//        else if (next_name == (*iter)->m_name) {
-//            return (*iter)->get_child(next_string);
-//        }
-//    }
-//    return nullptr;
-//}
-//
-//std::shared_ptr<POI> POI::find_children(const poi_container children, const std::string& name) {
-//    for (auto iter = children.begin(); iter != children.end(); ++iter) {
-//        auto child = (*iter)->get_child(name);
-//        if (child) return child;
-//    }
-//    return nullptr;
-//}
-//const poi_container* POI::get_children() const { return &this->m_children; }
-//void POI::clear_children() { this->m_children.clear(); }
-//
-//// setter
-//void POI::set_name(const std::string& name) { this->m_name = name; }
-//void POI::set_map_id(int id) { this->m_inheritable_data.m_map_id = id; }
-//void POI::set_x(float val) { this->m_inheritable_data.m_pos.x = val; }
-//void POI::set_y(float val) { this->m_inheritable_data.m_pos.y = val; }
-//void POI::set_z(float val) { this->m_inheritable_data.m_pos.z = val; }
-//void POI::set_type(const std::string& type) { this->m_inheritable_data.m_type = type; }
-//void POI::set_guid(const std::string& uid) { this->m_inheritable_data.m_guid = uid; }
-//void POI::set_icon_size(float val) { this->m_inheritable_data.m_icon_size = val; }
-//void POI::set_icon_file(const std::string& file) {
-//    std::string fixed_path = file;
-//    std::replace(fixed_path.begin(), fixed_path.end(), '\\', '/');
-//    this->m_inheritable_data.m_icon_file = fixed_path;
-//}
-//
-//void POI::set_alpha(float alpha) { this->m_inheritable_data.m_alpha = alpha; }
-//void POI::set_behavior(int i) { this->m_inheritable_data.m_behavior = i; }
-//void POI::set_fade_near(float fade) { this->m_inheritable_data.m_fade_near = fade; }
-//void POI::set_fade_far(float fade) { this->m_inheritable_data.m_fade_far = fade; }
-//void POI::set_height_offset(float off) { this->m_inheritable_data.m_height_offset = off; }
-//void POI::set_reset_length(int len) { this->m_inheritable_data.m_reset_length = len; }
-//void POI::set_display_name(const std::string& name) { this->m_inheritable_data.m_display_name = name; }
-//void POI::set_auto_trigger(bool mode) { this->m_inheritable_data.m_auto_trigger = mode; }
-//void POI::set_trigger_range(float range) { this->m_inheritable_data.m_trigger_range = range; }
-//void POI::set_has_countdown(bool cd) { this->m_inheritable_data.m_has_countdown = cd; }
-//void POI::set_achievement_id(int id) { this->m_inheritable_data.m_achievement_id = id; }
-//void POI::set_achievement_bit(int bit) { this->m_inheritable_data.m_achievement_bit = bit; }
-//void POI::set_info(const std::string& info) { this->m_inheritable_data.m_info = info; }
-//void POI::set_info_range(float range) { this->m_inheritable_data.m_info_range = range; }
-//void POI::set_is_poi(bool poi) { this->m_inheritable_data.m_is_poi = poi; }
-//void POI::set_pos(const glm::vec3& pos) { this->m_inheritable_data.m_pos = pos; }
-//void POI::set_enabled(bool state, bool recursive) {
-//    if (this->m_enabled == state) return;
-//    this->m_enabled = state;
-//    if (recursive) {
-//        for (auto child = this->m_children.begin(); child != this->m_children.end(); ++child) {
-//            child->get()->set_enabled(state, true);
-//        }
-//    }
-//    if (state) {
-//        auto parent = this->get_parent().read();
-//        if (parent) {
-//            parent->set_enabled(state, false);
-//        }
-//    }
-//}
-//
-//// getter
-//float POI::get_icon_size() const { return this->m_inheritable_data.m_icon_size; }
-//std::string POI::get_icon_file() const { return this->m_inheritable_data.m_icon_file; }
-//float POI::get_alpha() const { return this->m_inheritable_data.m_alpha; }
-//int POI::get_behavior() const { return this->m_inheritable_data.m_behavior; }
-//float POI::get_fade_near() const { return this->m_inheritable_data.m_fade_near; }
-//float POI::get_fade_far() const { return this->m_inheritable_data.m_fade_far; }
-//float POI::get_height_offset() const { return this->m_inheritable_data.m_height_offset; }
-//int POI::get_reset_length() const { return this->m_inheritable_data.m_reset_length; }
-//std::string POI::get_display_name() const { return this->m_inheritable_data.m_display_name; }
-//bool POI::get_auto_trigger() const { return this->m_inheritable_data.m_auto_trigger; }
-//float POI::get_trigger_range() const { return this->m_inheritable_data.m_trigger_range; }
-//bool POI::get_has_countdown() const { return this->m_inheritable_data.m_has_countdown; }
-//int POI::get_achievement_id() const { return this->m_inheritable_data.m_achievement_id; }
-//int POI::get_achievement_bit() const { return this->m_inheritable_data.m_achievement_bit; }
-//std::string POI::get_info() const { return this->m_inheritable_data.m_info; }
-//float POI::get_info_range() const { return this->m_inheritable_data.m_info_range; }
-//bool POI::get_is_poi() const { return this->m_inheritable_data.m_is_poi; }
-//int POI::get_map_id() const { return this->m_inheritable_data.m_map_id; }
-//glm::vec3 POI::get_pos() const { return this->m_inheritable_data.m_pos; }
-//std::string POI::get_guid() const { return this->m_inheritable_data.m_guid; }
-//std::string POI::get_name() const { return this->m_name; }
-//std::string POI::get_type() const { return this->m_inheritable_data.m_type; }
-//bool POI::is_enabled() const { return this->m_enabled; }
-//
-//
 
 #[cfg(test)]
 mod tests {
@@ -617,11 +530,14 @@ mod tests {
 
             <POIs>
             <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
+            <Trail type="collectible.LionArchKarka.Part2.Karka2" GUID="gLZdqI4M2EoIO/zrw5KqPg==" trailData="Data/Karkatrail2.trl" texture="Data/Karkahunt.png" color="F78181" alpha="0.8" fadeNear="3000" fadeFar="4000" animSpeed="0"/>
+            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
+            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
             </POIs>
             </OverlayData>
             "#;
 
-        let mut overlay_data: OverlayData = serde_xml_rs::from_str(&xml_string).unwrap();
+        let mut overlay_data: OverlayData = OverlayData::from_string(xml_string);
         overlay_data.fill_poi_parents();
 
         let parent_opt = overlay_data.pois.poi_list[0].read().unwrap().parent.clone();
