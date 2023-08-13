@@ -338,6 +338,7 @@ fn map_change_event(
                         material: materials.add(StandardMaterial {
                             base_color_texture: Some(texture_handle.clone()),
                             unlit: true,
+                            cull_mode: None,
                             alpha_mode: AlphaMode::Blend,
                             ..default()
                         }),
