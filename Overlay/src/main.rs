@@ -23,13 +23,12 @@ use bevy::{
 };
 use bevy_mod_billboard::prelude::*;
 
-mod gw2link;
 mod gw2poi;
 mod overlay_data;
 mod processutils;
 mod trail;
 
-use gw2link::GW2Link;
+use gw2_link::GW2Link;
 use gw2poi::PoiContainer;
 
 #[derive(Component)]

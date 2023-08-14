@@ -2,7 +2,6 @@ use std::{
     mem::size_of,
     net::UdpSocket,
     num::NonZeroUsize,
-    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -299,7 +298,7 @@ impl GW2Link {
                 }
             }
 
-            Err(e) => (), //println!("Error in update gw2: {e}"),
+            Err(_e) => (), //println!("Error in update gw2: {e}"),
         }
         false
     }

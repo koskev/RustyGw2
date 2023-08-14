@@ -26,3 +26,5 @@ serde_with = "3.2.0"
 log = "0.4.20"
 byteorder = "1.4.3"
 walkdir = "2.3.3"
+
+gw2_link = { path = "../gw2_link" }
