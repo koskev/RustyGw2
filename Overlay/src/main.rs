@@ -1,6 +1,8 @@
 //! This example shows various ways to configure texture materials in 3D.
 
+use overlay_data::OverlayData;
 use std::{f32::consts::PI, fs, path::Path, time::Instant};
+use trail::TrailContainer;
 use walkdir::WalkDir;
 
 use bevy::{
@@ -23,12 +25,12 @@ use bevy_mod_billboard::prelude::*;
 
 mod gw2link;
 mod gw2poi;
+mod overlay_data;
 mod processutils;
+mod trail;
 
 use gw2link::GW2Link;
-use gw2poi::{PoiContainer, TrailContainer};
-
-use crate::gw2poi::OverlayData;
+use gw2poi::PoiContainer;
 
 #[derive(Component)]
 struct GlobalState {
