@@ -124,6 +124,7 @@ fn main() {
         .add_systems(Update, update_gw2)
         .add_systems(Update, (update_text_fps, update_text_debug))
         .add_systems(Update, animate_texture)
+        .add_systems(Update, fade_out_pois)
         //.add_systems(Update, draw_lines)
         .add_systems(Update, map_change_event)
         .insert_resource(ClearColor(Color::NONE))
@@ -384,11 +385,23 @@ fn map_change_event(
                 let entity = BevyPOI {
                     poi: poi_lock.clone(),
                 };
+
+                let mut billboard_mesh: Mesh = Mesh::from(Quad::new(Vec2::new(2., 2.)));
+                // Build vertex colors for the quad. One entry per vertex (the corners of the quad)
+                let vertex_colors: Vec<[f32; 4]> = vec![
+                    Color::WHITE.as_rgba_f32(),
+                    Color::WHITE.as_rgba_f32(),
+                    Color::WHITE.as_rgba_f32(),
+                    Color::WHITE.as_rgba_f32(),
+                ];
+                // Insert the vertex colors as an attribute
+                billboard_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vertex_colors);
+
                 commands.spawn((
                     BillboardTextureBundle {
                         texture: billboard_textures
                             .add(BillboardTexture::Single(texture_handle.clone())),
-                        mesh: BillboardMeshHandle(meshes.add(Quad::new(Vec2::new(2., 2.)).into())),
+                        mesh: BillboardMeshHandle(meshes.add(billboard_mesh)),
                         transform: Transform::from_xyz(
                             poi.pos.xpos,
                             poi.pos.ypos + poi.get_height_offset().unwrap_or(0.0),
@@ -459,4 +472,32 @@ fn animate_texture(
         }
     }
     // The format of the UV coordinates should be Float32x2.
+}
+
+fn fade_out_pois(
+    poi_query: Query<(&mut BillboardMeshHandle, &Transform, &BevyPOI)>,
+    camera_query: Query<&Transform, With<Gw2Camera>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    poi_query.iter().for_each(|(mesh_handle, transform, poi)| {
+        // a
+        let mesh = meshes.get_mut(&mesh_handle.0).unwrap();
+        let color_attribute = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR).unwrap();
+
+        let VertexAttributeValues::Float32x4(color_attribute) = color_attribute else {
+            panic!("Unexpected vertex format, expected Float32x4.");
+        };
+
+        let camera_pos = camera_query.get_single().unwrap();
+        let distance = camera_pos.translation.distance(transform.translation);
+        let far = poi.poi.read().unwrap().get_fade_far().unwrap_or(f32::MAX) / 39.37;
+        let near = poi.poi.read().unwrap().get_fade_near().unwrap_or(0.0) / 39.37;
+
+        let a = (1.0 - (distance - near) / (far - near)).clamp(0.0, 1.0);
+        for color in color_attribute.iter_mut() {
+            color[3] = a;
+        }
+
+        //// Iterate over the UV coordinates, and change them as we want.
+    });
 }

@@ -10,7 +10,7 @@ use std::{
 };
 
 use bevy::{
-    prelude::{info, Mesh, Vec2, Vec3},
+    prelude::{info, Mesh, Vec2, Vec3, Vec4},
     render::{mesh::Indices, render_resource::PrimitiveTopology},
 };
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -505,8 +505,8 @@ impl Trail {
             }
             match prev_data {
                 Some(prev_data) => {
-                    vertices.push(Vertex::new(prev_p1, Vec3::ONE, Vec2::new(0.0, 0.0)));
-                    vertices.push(Vertex::new(prev_p2, Vec3::ONE, Vec2::new(1.0, 0.0)));
+                    vertices.push(Vertex::new(prev_p1, Vec4::ONE, Vec2::new(0.0, 0.0)));
+                    vertices.push(Vertex::new(prev_p2, Vec4::ONE, Vec2::new(1.0, 0.0)));
                     (prev_p1, prev_p2) =
                         Trail::get_perpendicular_point(prev_data, current_data, width);
                     // Calculate distance between the last and current point to adjust the uv
@@ -514,8 +514,8 @@ impl Trail {
                     let distance = prev_data.distance(current_data);
                     // TODO: Fix very long trail segments
                     let frac = 1.0f32.max(distance / width);
-                    vertices.push(Vertex::new(prev_p2, Vec3::ONE, Vec2::new(1.0, frac)));
-                    vertices.push(Vertex::new(prev_p1, Vec3::ONE, Vec2::new(0.0, frac)));
+                    vertices.push(Vertex::new(prev_p2, Vec4::ONE, Vec2::new(1.0, frac)));
+                    vertices.push(Vertex::new(prev_p1, Vec4::ONE, Vec2::new(0.0, frac)));
                     indices.push(current_index);
                     indices.push(current_index + 1);
                     indices.push(current_index + 2);
@@ -546,10 +546,10 @@ fn create_mesh(vertices: Vec<Vertex>, indices: Vec<u32>) -> Mesh {
         Mesh::ATTRIBUTE_POSITION,
         vertices.iter().map(|v| v.pos).collect::<Vec<Vec3>>(),
     );
-    //cube_mesh.insert_attribute(
-    //    Mesh::ATTRIBUTE_COLOR,
-    //    vertices.iter().map(|v| v.color).collect::<Vec<Vec3>>(),
-    //);
+    cube_mesh.insert_attribute(
+        Mesh::ATTRIBUTE_COLOR,
+        vertices.iter().map(|v| v.color).collect::<Vec<Vec4>>(),
+    );
     cube_mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         vertices.iter().map(|v| v.tex_coord).collect::<Vec<Vec2>>(),
@@ -562,12 +562,12 @@ fn create_mesh(vertices: Vec<Vertex>, indices: Vec<u32>) -> Mesh {
 #[derive(Debug, Default, Clone, Copy)]
 struct Vertex {
     pos: Vec3,
-    color: Vec3,
+    color: Vec4,
     tex_coord: Vec2,
 }
 
 impl Vertex {
-    pub fn new(pos: Vec3, color: Vec3, tex_coord: Vec2) -> Self {
+    pub fn new(pos: Vec3, color: Vec4, tex_coord: Vec2) -> Self {
         Self {
             pos,
             color,
@@ -642,6 +642,8 @@ impl POI {
     getter_setter_poi!(map_id, u32);
     getter_setter_poi!(display_name, String);
     getter_setter_poi!(height_offset, f32);
+    getter_setter_poi!(fade_near, f32);
+    getter_setter_poi!(fade_far, f32);
 }
 
 #[cfg(test)]
