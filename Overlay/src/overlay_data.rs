@@ -89,3 +89,133 @@ pub struct POIs {
     #[serde(rename = "Trail", deserialize_with = "deserialize_trail_vec")]
     pub trail_list: Vec<TrailContainer>,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use crate::{
+        gw2poi::{MarkerCategory, PoiTrait, POI},
+        overlay_data::OverlayData,
+    };
+
+    #[test]
+    fn xml_test() {
+        let xml_string = r#"
+            <OverlayData>
+            <MarkerCategory name="collectible">
+            <MarkerCategory name="LionArchKarka" DisplayName="Lion's Arch Exterminator">
+            <MarkerCategory name="Part1" DisplayName="Part 1">
+            <MarkerCategory name="Karka1" DisplayName="Trail" iconFile="Data\Karkasymbol.png"/>
+            <MarkerCategory name="Karkastart1" DisplayName="Start" iconFile="Data\Karkahunt1.png"/>
+            <MarkerCategory name="Karkaend1" DisplayName="End" iconFile="Data\KarkasymbolEnd1.png"/>
+            </MarkerCategory>
+            </MarkerCategory>
+            </MarkerCategory>
+
+            <POIs>
+            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
+            <Trail type="collectible.LionArchKarka.Part2.Karka2" GUID="gLZdqI4M2EoIO/zrw5KqPg==" trailData="Data/Karkatrail2.trl" texture="Data/Karkahunt.png" color="F78181" alpha="0.8" fadeNear="3000" fadeFar="4000" animSpeed="0"/>
+            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
+            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
+            </POIs>
+            </OverlayData>
+            "#;
+
+        let mut overlay_data: OverlayData = OverlayData::from_string(xml_string);
+        overlay_data.fill_poi_parents();
+
+        let parent_opt = overlay_data.pois.poi_list[0].read().unwrap().get_parent();
+        assert!(parent_opt.is_some());
+        let parent = parent_opt.unwrap();
+        assert_eq!(parent.read().unwrap().name, "Karka1");
+
+        let poi = overlay_data.pois.poi_list[0].read().unwrap();
+
+        assert_eq!(poi.get_map_id().unwrap(), 50);
+        assert_eq!(
+            poi.poi_type.clone().unwrap(),
+            "collectible.LionArchKarka.Part1.Karka1"
+        );
+        assert_eq!(
+            poi.get_icon_file().unwrap().to_str().unwrap(),
+            r"Data\Karkasymbol.png"
+        );
+
+        assert_eq!(overlay_data.pois.trail_list.len(), 1);
+    }
+
+    #[test]
+    fn fill_test() {
+        let mut overlay_data = OverlayData {
+            ..Default::default()
+        };
+        let category = Arc::new(RwLock::new(MarkerCategory::new()));
+        let category2 = Arc::new(RwLock::new(MarkerCategory::new()));
+        category2
+            .write()
+            .unwrap()
+            .data
+            .set_parent(Some(category.clone()));
+
+        category
+            .write()
+            .unwrap()
+            .children
+            .insert("category2".into(), category2.clone());
+        category2.write().unwrap().name = "category2".into();
+        category.write().unwrap().name = "category".into();
+
+        let mut poi = POI::new(Some(category2));
+        poi.poi_type = Some("category.category2".into());
+
+        overlay_data.marker_category.push(category);
+        overlay_data.pois.poi_list.push(Arc::new(RwLock::new(poi)));
+
+        overlay_data.fill_poi_parents();
+
+        let my_cat = overlay_data.marker_category[0].read().unwrap();
+        assert_eq!(overlay_data.marker_category.len(), 1);
+        assert_eq!(my_cat.name, "category");
+        let child = my_cat.get_category_children("category2").unwrap();
+        assert_eq!(child.read().unwrap().name, "category2");
+    }
+
+    #[test]
+    fn inherit_test() {
+        let category = Arc::new(RwLock::new(MarkerCategory::new()));
+        category.write().unwrap().data = POI::new(None);
+        category
+            .write()
+            .unwrap()
+            .data
+            .set_icon_file(Some("test_file".into()));
+        category
+            .write()
+            .unwrap()
+            .data
+            .set_display_name(Some("parent_name".into()));
+        let category2 = Arc::new(RwLock::new(MarkerCategory::new()));
+        category.write().unwrap().name = "category2".into();
+        category2.write().unwrap().name = "category2".into();
+        category2.write().unwrap().data.set_parent(Some(category));
+
+        let mut poi = POI::new(Some(category2));
+
+        assert!(poi.get_parent().is_some());
+        let parent_arc = poi.get_parent().unwrap();
+        let parent = parent_arc.read().unwrap();
+        assert_eq!(parent.name, "category2");
+
+        assert_eq!(
+            parent.data.get_icon_file().unwrap().to_str().unwrap(),
+            "test_file"
+        );
+
+        assert_eq!(poi.get_icon_file().unwrap().to_str().unwrap(), "test_file");
+        assert_eq!(poi.get_display_name().unwrap(), "parent_name");
+
+        poi.set_display_name(Some("child_name".into()));
+        assert_eq!(poi.get_display_name().unwrap(), "child_name");
+    }
+}

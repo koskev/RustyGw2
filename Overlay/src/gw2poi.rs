@@ -149,20 +149,20 @@ impl PoiTrait for MarkerCategory {
 
 #[derive(Debug, Clone, Deserialize)]
 pub enum PoiBehavior {
-    DEFAULT = 0,
-    REAPPEAR_ON_MAP_CHANGE = 1,
-    REAPPEAR_ON_DAILY_RESET = 2,
-    ONLY_VISIBLE_BEFORE_ACTIVATION = 3,
-    REAPPEAR_AFTER_TIMER = 4,
-    REAPPEAR_ON_MAP_RESET = 5,
-    ONCE_PER_INSTANCE = 6,
-    ONCE_DAILY_PER_CHARACTER = 7,
-    ACTION_ON_COMBAT = 23732, // custom value.
+    Default = 0,
+    ReappearOnMapChange = 1,
+    ReappearOnDailyReset = 2,
+    OnlyVisibleBeforeActivation = 3,
+    ReappearAfterTimer = 4,
+    ReappearOnMapReset = 5,
+    OncePerInstance = 6,
+    OnceDailyPerCharacter = 7,
+    ActionOnCombat = 23732, // custom value.
 }
 
 impl Default for PoiBehavior {
     fn default() -> Self {
-        PoiBehavior::DEFAULT
+        PoiBehavior::Default
     }
 }
 
@@ -203,6 +203,7 @@ pub struct Position {
     pub zpos: f32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Default, Clone, Deserialize)]
 struct InheritablePOIData {
     #[serde(
@@ -258,32 +259,8 @@ struct InheritablePOIData {
     pub is_poi: Option<bool>, // = false;
 }
 
-impl InheritablePOIData {
-    fn merge(&mut self, other: &InheritablePOIData) {
-        self.map_id = self.map_id.or(other.map_id);
-        self.icon_file = self.icon_file.clone().or(other.icon_file.clone());
-        self.guid = self.guid.clone().or(other.guid.clone());
-        self.icon_size = self.icon_size.or(other.icon_size);
-        self.alpha = self.alpha.or(other.alpha);
-        self.behavior = self.behavior.clone().or(other.behavior.clone());
-        self.fade_near = self.fade_near.or(other.fade_near);
-        self.fade_far = self.fade_far.or(other.fade_far);
-        self.height_offset = self.height_offset.or(other.height_offset);
-        self.reset_length = self.reset_length.or(other.reset_length);
-        self.display_name = self.display_name.clone().or(other.display_name.clone());
-        self.auto_trigger = self.auto_trigger.or(other.auto_trigger);
-        self.has_countdown = self.has_countdown.or(other.has_countdown);
-        self.trigger_range = self.trigger_range.or(other.trigger_range);
-
-        self.achievement_id = self.achievement_id.or(other.achievement_id);
-        self.achievement_bit = self.achievement_bit.or(other.achievement_bit);
-        self.info = self.info.clone().or(other.info.clone());
-        self.info_range = self.info_range.or(other.info_range);
-        self.is_poi = self.is_poi.or(other.is_poi);
-    }
-}
-
 // TODO: are POI and MarkerCategory effectively the same?
+#[allow(dead_code)]
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct POI {
     #[serde(rename = "type")]
@@ -331,9 +308,10 @@ macro_rules! getter_setter_poi {
     };
 }
 
+#[allow(dead_code)]
 impl POI {
     // Creates a new POI
-    fn new(parent: Option<MarkerCategoryContainer>) -> Self {
+    pub fn new(parent: Option<MarkerCategoryContainer>) -> Self {
         let poi = POI {
             parent: parent.clone(),
             ..Default::default()
@@ -351,131 +329,4 @@ impl POI {
     getter_setter_poi!(height_offset, f32);
     getter_setter_poi!(fade_near, f32);
     getter_setter_poi!(fade_far, f32);
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{Arc, RwLock};
-
-    use crate::gw2poi::PoiTrait;
-
-    use super::{InheritablePOIData, MarkerCategory, OverlayData, POI};
-
-    #[test]
-    fn xml_test() {
-        let xml_string = r#"
-            <OverlayData>
-            <MarkerCategory name="collectible">
-            <MarkerCategory name="LionArchKarka" DisplayName="Lion's Arch Exterminator">
-            <MarkerCategory name="Part1" DisplayName="Part 1">
-            <MarkerCategory name="Karka1" DisplayName="Trail" iconFile="Data\Karkasymbol.png"/>
-            <MarkerCategory name="Karkastart1" DisplayName="Start" iconFile="Data\Karkahunt1.png"/>
-            <MarkerCategory name="Karkaend1" DisplayName="End" iconFile="Data\KarkasymbolEnd1.png"/>
-            </MarkerCategory>
-            </MarkerCategory>
-            </MarkerCategory>
-
-            <POIs>
-            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
-            <Trail type="collectible.LionArchKarka.Part2.Karka2" GUID="gLZdqI4M2EoIO/zrw5KqPg==" trailData="Data/Karkatrail2.trl" texture="Data/Karkahunt.png" color="F78181" alpha="0.8" fadeNear="3000" fadeFar="4000" animSpeed="0"/>
-            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
-            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
-            </POIs>
-            </OverlayData>
-            "#;
-
-        let mut overlay_data: OverlayData = OverlayData::from_string(xml_string);
-        overlay_data.fill_poi_parents();
-
-        let parent_opt = overlay_data.pois.poi_list[0].read().unwrap().parent.clone();
-        assert!(parent_opt.is_some());
-        let parent = parent_opt.unwrap();
-        assert_eq!(parent.read().unwrap().name, "Karka1");
-
-        let poi = overlay_data.pois.poi_list[0].read().unwrap();
-
-        assert_eq!(poi.get_map_id().unwrap(), 50);
-        assert_eq!(
-            poi.poi_type.clone().unwrap(),
-            "collectible.LionArchKarka.Part1.Karka1"
-        );
-        assert_eq!(
-            poi.get_icon_file().unwrap().to_str().unwrap(),
-            r"Data\Karkasymbol.png"
-        );
-
-        assert_eq!(overlay_data.pois.trail_list.len(), 1);
-    }
-
-    #[test]
-    fn fill_test() {
-        let mut overlay_data = OverlayData {
-            ..Default::default()
-        };
-        let category = Arc::new(RwLock::new(MarkerCategory::new()));
-        let category2 = Arc::new(RwLock::new(MarkerCategory::new()));
-        category2.write().unwrap().data.parent = Some(category.clone());
-
-        category
-            .write()
-            .unwrap()
-            .children
-            .insert("category2".into(), category2.clone());
-        category2.write().unwrap().name = "category2".into();
-        category.write().unwrap().name = "category".into();
-
-        let mut poi = POI::new(Some(category2));
-        poi.poi_type = Some("category.category2".into());
-
-        overlay_data.marker_category.push(category);
-        overlay_data.pois.poi_list.push(Arc::new(RwLock::new(poi)));
-
-        overlay_data.fill_poi_parents();
-
-        let my_cat = overlay_data.marker_category[0].read().unwrap();
-        assert_eq!(overlay_data.marker_category.len(), 1);
-        assert_eq!(my_cat.name, "category");
-        let child = my_cat.get_category_children("category2").unwrap();
-        assert_eq!(child.read().unwrap().name, "category2");
-    }
-
-    #[test]
-    fn inherit_test() {
-        let category = Arc::new(RwLock::new(MarkerCategory::new()));
-        category.write().unwrap().data = POI {
-            ..Default::default()
-        };
-        category
-            .write()
-            .unwrap()
-            .data
-            .set_icon_file(Some("test_file".into()));
-        category
-            .write()
-            .unwrap()
-            .data
-            .set_display_name(Some("parent_name".into()));
-        let category2 = Arc::new(RwLock::new(MarkerCategory::new()));
-        category.write().unwrap().name = "category2".into();
-        category2.write().unwrap().name = "category2".into();
-        category2.write().unwrap().data.parent = Some(category);
-
-        let mut poi = POI::new(Some(category2));
-
-        assert!(poi.parent.is_some());
-        let parent_arc = poi.parent.clone().unwrap();
-        let parent = parent_arc.read().unwrap();
-        assert_eq!(parent.name, "category2");
-
-        assert_eq!(
-            parent.data.get_icon_file().unwrap().to_str().unwrap(),
-            "test_file"
-        );
-
-        assert_eq!(poi.get_icon_file().unwrap().to_str().unwrap(), "test_file");
-        assert_eq!(poi.get_display_name().unwrap(), "parent_name");
-
-        poi.set_display_name(Some("child_name".into()));
-        assert_eq!(poi.get_display_name().unwrap(), "child_name");
-    }
 }
