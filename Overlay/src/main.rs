@@ -123,6 +123,7 @@ fn main() {
         //.add_systems(Update, rotate_camera)
         .add_systems(Update, update_gw2)
         .add_systems(Update, (update_text_fps, update_text_debug))
+        .add_systems(Update, animate_texture)
         //.add_systems(Update, draw_lines)
         .add_systems(Update, map_change_event)
         .insert_resource(ClearColor(Color::NONE))
@@ -345,7 +346,7 @@ fn draw_lines(mut gizmos: Gizmos) {
 struct BevyPOI {
     poi: PoiContainer,
 }
-#[derive(Component)]
+#[derive(Component, Clone)]
 struct BevyTrail {
     trail: TrailContainer,
 }
@@ -429,9 +430,33 @@ fn map_change_event(
                     .collect();
 
                 for bundle in pbr_bundles {
-                    commands.spawn(bundle);
+                    commands.spawn((bundle, entity.clone()));
                 }
             }
         });
     }
+}
+
+// Function that changes the UV mapping of the mesh, to apply the other texture.
+fn animate_texture(
+    mesh_query: Query<&Handle<Mesh>, With<BevyTrail>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for mesh_handle in mesh_query.iter() {
+        let mesh = meshes.get_mut(mesh_handle).unwrap();
+        // Get a mutable reference to the values of the UV attribute, so we can iterate over it.
+        let uv_attribute = mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0).unwrap();
+
+        let VertexAttributeValues::Float32x2(uv_attribute) = uv_attribute else {
+            panic!("Unexpected vertex format, expected Float32x2.");
+        };
+
+        // Iterate over the UV coordinates, and change them as we want.
+        for uv_coord in uv_attribute.iter_mut() {
+            //uv_coord[0] += 0.001 % 1.0;
+            // The "distance" between the different uv_coord[1] should stay the same!
+            uv_coord[1] = uv_coord[1] + 0.01;
+        }
+    }
+    // The format of the UV coordinates should be Float32x2.
 }

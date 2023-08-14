@@ -509,8 +509,11 @@ impl Trail {
                     vertices.push(Vertex::new(prev_p2, Vec3::ONE, Vec2::new(1.0, 0.0)));
                     (prev_p1, prev_p2) =
                         Trail::get_perpendicular_point(prev_data, current_data, width);
+                    // Calculate distance between the last and current point to adjust the uv
+                    // coordinates
                     let distance = prev_data.distance(current_data);
-                    let frac = (1.0f32.max(distance / width) + 0.5) as f32;
+                    // TODO: Fix very long trail segments
+                    let frac = 1.0f32.max(distance / width);
                     vertices.push(Vertex::new(prev_p2, Vec3::ONE, Vec2::new(1.0, frac)));
                     vertices.push(Vertex::new(prev_p1, Vec3::ONE, Vec2::new(0.0, frac)));
                     indices.push(current_index);
