@@ -488,7 +488,7 @@ impl Trail {
         let mut prev_p1 = Vec3::ZERO;
         let mut prev_p2 = Vec3::ZERO;
         self.trail_data.iter().for_each(|trail| {
-            let current_data = Vec3::new(trail.x, trail.y, -trail.z);
+            let current_data = Vec3::new(trail.x, trail.y, trail.z);
             if current_data.x as i32 == 0
                 && current_data.y as i32 == 0
                 && current_data.z as i32 == 0

@@ -4,9 +4,19 @@ use std::{f32::consts::PI, fs, path::Path, time::Instant};
 use walkdir::WalkDir;
 
 use bevy::{
+    core_pipeline::tonemapping::{DebandDither, Tonemapping},
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     prelude::{shape::Quad, *},
-    render::render_resource::{AddressMode, SamplerDescriptor},
+    render::{
+        camera::{
+            camera_system, CameraProjection, CameraProjectionPlugin, CameraRenderGraph, Viewport,
+        },
+        mesh::VertexAttributeValues,
+        primitives::Frustum,
+        render_resource::{AddressMode, SamplerDescriptor},
+        view::{update_frusta, ColorGrading, VisibilitySystems, VisibleEntities},
+    },
+    transform::TransformSystem,
     window::PresentMode,
 };
 use bevy_mod_billboard::prelude::*;
@@ -40,6 +50,64 @@ struct CurrentLevel(u32);
 #[derive(Resource)]
 struct MapData {
     data: OverlayData,
+}
+
+/// A 3D camera projection in which distant objects appear smaller than close objects.
+#[derive(Component, Debug, Clone, Reflect)]
+#[reflect(Component, Default)]
+pub struct PerspectiveProjectionGW2 {
+    /// The vertical field of view (FOV) in radians.
+    ///
+    /// Defaults to a value of π/4 radians or 45 degrees.
+    pub fov: f32,
+
+    /// The aspect ratio (width divided by height) of the viewing frustum.
+    ///
+    /// Bevy's [`camera_system`](crate::camera::camera_system) automatically
+    /// updates this value when the aspect ratio of the associated window changes.
+    ///
+    /// Defaults to a value of `1.0`.
+    pub aspect_ratio: f32,
+
+    /// The distance from the camera in world units of the viewing frustum's near plane.
+    ///
+    /// Objects closer to the camera than this value will not be visible.
+    ///
+    /// Defaults to a value of `0.1`.
+    pub near: f32,
+
+    /// The distance from the camera in world units of the viewing frustum's far plane.
+    ///
+    /// Objects farther from the camera than this value will not be visible.
+    ///
+    /// Defaults to a value of `1000.0`.
+    pub far: f32,
+}
+
+impl CameraProjection for PerspectiveProjectionGW2 {
+    fn get_projection_matrix(&self) -> Mat4 {
+        let mat = Mat4::perspective_infinite_lh(self.fov, self.aspect_ratio, self.near);
+        mat
+    }
+
+    fn update(&mut self, width: f32, height: f32) {
+        self.aspect_ratio = width / height;
+    }
+
+    fn far(&self) -> f32 {
+        self.far
+    }
+}
+
+impl Default for PerspectiveProjectionGW2 {
+    fn default() -> Self {
+        PerspectiveProjectionGW2 {
+            fov: std::f32::consts::PI / 4.0,
+            near: 0.1,
+            far: 1000.0,
+            aspect_ratio: 1.0,
+        }
+    }
 }
 
 fn main() {
@@ -78,6 +146,14 @@ fn main() {
         .add_plugins(BillboardPlugin)
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_event::<MapChangeEvent>()
+        .add_plugins(CameraProjectionPlugin::<PerspectiveProjectionGW2>::default())
+        .add_systems(
+            PostUpdate,
+            update_frusta::<PerspectiveProjectionGW2>
+                .in_set(VisibilitySystems::UpdatePerspectiveFrusta)
+                .after(camera_system::<PerspectiveProjectionGW2>)
+                .after(TransformSystem::TransformPropagate),
+        )
         .run();
 }
 
@@ -101,14 +177,11 @@ fn update_gw2(
     let data = global_state_query.single_mut().gw2link.get_gw2_data();
 
     let mut cam = camera_query.single_mut();
-    let mut camera_pos = Vec3::from_array(data.get_camera_pos());
-    let mut camera_front = Vec3::from_array(data.get_camera_front());
-
-    camera_pos.z *= -1.0;
-    camera_front.z *= -1.0;
+    let camera_pos = Vec3::from_array(data.get_camera_pos());
+    let camera_front = Vec3::from_array(data.get_camera_front());
 
     cam.translation = camera_pos;
-    cam.look_to(camera_front, Vec3::Y);
+    cam.look_to(-camera_front, Vec3::Y);
 
     let map_id = data.get_context().map_id;
     if current_level_query.0 != map_id {
@@ -123,7 +196,6 @@ fn setup(
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut billboard_textures: ResMut<Assets<BillboardTexture>>,
 ) {
     let link = GW2Link::new().unwrap();
     let state = GlobalState { gw2link: link };
@@ -174,16 +246,26 @@ fn setup(
     ));
 
     // camera
-    let mut cam_bundle = Camera3dBundle::default();
-    let projection = PerspectiveProjection {
+    let projection = PerspectiveProjectionGW2 {
         fov: 1.222,
         far: 1000.0,
         ..Default::default()
     };
-    cam_bundle.projection = Projection::Perspective(projection);
-    cam_bundle.transform = Transform::from_translation(Vec3::new(0.0, 0.0, -1.0));
 
-    commands.spawn((cam_bundle, Gw2Camera));
+    commands.spawn((
+        CameraRenderGraph::new(bevy::core_pipeline::core_3d::graph::NAME),
+        Camera::default(),
+        projection,
+        VisibleEntities::default(),
+        Frustum::default(),
+        Transform::default(),
+        GlobalTransform::default(),
+        Camera3d::default(),
+        Tonemapping::default(),
+        DebandDither::Enabled,
+        ColorGrading::default(),
+        Gw2Camera,
+    ));
 
     let path = Path::new("pois");
 
@@ -309,7 +391,7 @@ fn map_change_event(
                         transform: Transform::from_xyz(
                             poi.pos.xpos,
                             poi.pos.ypos + poi.get_height_offset().unwrap_or(0.0),
-                            -poi.pos.zpos,
+                            poi.pos.zpos,
                         ),
                         ..default()
                     },
