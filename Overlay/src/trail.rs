@@ -17,6 +17,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use serde::{Deserialize, Deserializer};
 
 use crate::gw2poi::POI;
+use crate::utils::ToGw2Coordinate;
 
 pub type TrailContainer = Arc<RwLock<Trail>>;
 
@@ -38,6 +39,16 @@ struct TrailData {
     x: f32,
     y: f32,
     z: f32,
+}
+
+impl From<Vec3> for TrailData {
+    fn from(value: Vec3) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+            z: value.z,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -85,8 +96,12 @@ impl Trail {
                         let x = cursor.read_f32::<LittleEndian>()?;
                         let y = cursor.read_f32::<LittleEndian>()?;
                         let z = cursor.read_f32::<LittleEndian>()?;
+                        let pos = Vec3::new(x, y, z);
 
-                        let trail = TrailData { x, y, z };
+                        #[cfg(not(feature = "custom_projection"))]
+                        let trail = TrailData::from(pos.as_gw2_coordinate());
+                        #[cfg(feature = "custom_projection")]
+                        let trail = TrailData::from(pos);
                         self.trail_data.push(trail);
                     }
                 }
@@ -154,7 +169,8 @@ impl Trail {
                     // coordinates
                     let distance = prev_data.distance(current_data);
                     // TODO: Fix very long trail segments
-                    let frac = 1.0f32.max(distance / width);
+                    // Negative to flip the direction
+                    let frac = 1.0f32.max(distance / width) * -1.0;
                     vertices.push(Vertex::new(prev_p2, Vec4::ONE, Vec2::new(1.0, frac)));
                     vertices.push(Vertex::new(prev_p1, Vec4::ONE, Vec2::new(0.0, frac)));
                     indices.push(current_index);

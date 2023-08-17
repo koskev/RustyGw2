@@ -92,7 +92,7 @@ impl LinkedMem {
 }
 
 #[repr(C, packed)]
-struct LinkedMemNet {
+pub struct LinkedMemNet {
     ui_version: u32,
     ui_tick: u32,
     avatar_position: [f32; 3],

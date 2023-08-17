@@ -23,13 +23,21 @@ use bevy::{
 };
 use bevy_mod_billboard::prelude::*;
 
+#[cfg(feature = "custom_projection")]
+mod custom_camera;
 mod gw2poi;
 mod overlay_data;
 mod processutils;
 mod trail;
+mod utils;
+
+#[cfg(feature = "custom_projection")]
+use custom_camera::PerspectiveProjectionGW2 as PerspectiveProjection;
 
 use gw2_link::GW2Link;
 use gw2poi::PoiContainer;
+
+use utils::ToGw2Coordinate;
 
 #[derive(Component)]
 struct GlobalState {
@@ -53,64 +61,6 @@ struct MapData {
     data: OverlayData,
 }
 
-/// A 3D camera projection in which distant objects appear smaller than close objects.
-#[derive(Component, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
-pub struct PerspectiveProjectionGW2 {
-    /// The vertical field of view (FOV) in radians.
-    ///
-    /// Defaults to a value of π/4 radians or 45 degrees.
-    pub fov: f32,
-
-    /// The aspect ratio (width divided by height) of the viewing frustum.
-    ///
-    /// Bevy's [`camera_system`](crate::camera::camera_system) automatically
-    /// updates this value when the aspect ratio of the associated window changes.
-    ///
-    /// Defaults to a value of `1.0`.
-    pub aspect_ratio: f32,
-
-    /// The distance from the camera in world units of the viewing frustum's near plane.
-    ///
-    /// Objects closer to the camera than this value will not be visible.
-    ///
-    /// Defaults to a value of `0.1`.
-    pub near: f32,
-
-    /// The distance from the camera in world units of the viewing frustum's far plane.
-    ///
-    /// Objects farther from the camera than this value will not be visible.
-    ///
-    /// Defaults to a value of `1000.0`.
-    pub far: f32,
-}
-
-impl CameraProjection for PerspectiveProjectionGW2 {
-    fn get_projection_matrix(&self) -> Mat4 {
-        let mat = Mat4::perspective_infinite_lh(self.fov, self.aspect_ratio, self.near);
-        mat
-    }
-
-    fn update(&mut self, width: f32, height: f32) {
-        self.aspect_ratio = width / height;
-    }
-
-    fn far(&self) -> f32 {
-        self.far
-    }
-}
-
-impl Default for PerspectiveProjectionGW2 {
-    fn default() -> Self {
-        PerspectiveProjectionGW2 {
-            fov: std::f32::consts::PI / 4.0,
-            near: 0.1,
-            far: 1000.0,
-            aspect_ratio: 1.0,
-        }
-    }
-}
-
 fn main() {
     let pid = processutils::find_wine_process("GW2-64.exe");
     info!("Got pid {:?}", pid);
@@ -118,12 +68,11 @@ fn main() {
 
     // TODO: instead of own plugin just change the attributes etc. of the existing window by
     // getting the raw handle
-    App::new()
-        .add_systems(Startup, setup)
+    let mut app = App::new();
+    app.add_systems(Startup, setup)
         .add_systems(Startup, setup_window)
-        //.add_systems(Update, rotate_camera)
         .add_systems(Update, update_gw2)
-        .add_systems(Update, (update_text_fps, update_text_debug))
+        //.add_systems(Update, (update_text_fps, update_text_debug))
         .add_systems(Update, animate_texture)
         .add_systems(Update, fade_out_pois)
         //.add_systems(Update, draw_lines)
@@ -148,16 +97,19 @@ fn main() {
         .add_plugins(custom_window_plugin::WinitPlugin)
         .add_plugins(BillboardPlugin)
         .add_plugins(FrameTimeDiagnosticsPlugin)
-        .add_event::<MapChangeEvent>()
-        .add_plugins(CameraProjectionPlugin::<PerspectiveProjectionGW2>::default())
+        .add_event::<MapChangeEvent>();
+
+    #[cfg(feature = "custom_projection")]
+    app.add_plugins(CameraProjectionPlugin::<PerspectiveProjection>::default())
         .add_systems(
             PostUpdate,
-            update_frusta::<PerspectiveProjectionGW2>
+            update_frusta::<PerspectiveProjection>
                 .in_set(VisibilitySystems::UpdatePerspectiveFrusta)
-                .after(camera_system::<PerspectiveProjectionGW2>)
+                .after(camera_system::<PerspectiveProjection>)
                 .after(TransformSystem::TransformPropagate),
-        )
-        .run();
+        );
+
+    app.run();
 }
 
 fn setup_window(mut window: Query<&mut Window>) {
@@ -180,10 +132,18 @@ fn update_gw2(
     let data = global_state_query.single_mut().gw2link.get_gw2_data();
 
     let mut cam = camera_query.single_mut();
-    let camera_pos = Vec3::from_array(data.get_camera_pos());
-    let camera_front = Vec3::from_array(data.get_camera_front());
+    let mut camera_pos = Vec3::from_array(data.get_camera_pos());
+    let mut camera_front = Vec3::from_array(data.get_camera_front());
+
+    #[cfg(not(feature = "custom_projection"))]
+    camera_pos.to_gw2_coordinate();
+    #[cfg(not(feature = "custom_projection"))]
+    camera_front.to_gw2_coordinate();
 
     cam.translation = camera_pos;
+    #[cfg(not(feature = "custom_projection"))]
+    cam.look_to(camera_front, Vec3::Y);
+    #[cfg(feature = "custom_projection")]
     cam.look_to(-camera_front, Vec3::Y);
 
     let map_id = data.get_context().map_id;
@@ -205,27 +165,27 @@ fn setup(
     commands.spawn(state);
     // load a texture and retrieve its aspect ratio
 
-    commands.spawn((
-        // Create a TextBundle that has a Text with a single section.
-        TextBundle::from_section(
-            // Accepts a `String` or any type that converts into a `String`, such as `&str`
-            "hello\nbevy!",
-            TextStyle {
-                font: asset_server.load("fonts/FiraSans-Bold.ttf"),
-                font_size: 100.0,
-                color: Color::WHITE,
-            },
-        ) // Set the alignment of the Text
-        .with_text_alignment(TextAlignment::Center)
-        // Set the style of the TextBundle itself.
-        .with_style(Style {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(5.0),
-            right: Val::Px(15.0),
-            ..default()
-        }),
-        DebugText,
-    ));
+    //commands.spawn((
+    //    // Create a TextBundle that has a Text with a single section.
+    //    TextBundle::from_section(
+    //        // Accepts a `String` or any type that converts into a `String`, such as `&str`
+    //        "hello\nbevy!",
+    //        TextStyle {
+    //            font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+    //            font_size: 100.0,
+    //            color: Color::WHITE,
+    //        },
+    //    ) // Set the alignment of the Text
+    //    .with_text_alignment(TextAlignment::Center)
+    //    // Set the style of the TextBundle itself.
+    //    .with_style(Style {
+    //        position_type: PositionType::Absolute,
+    //        bottom: Val::Px(5.0),
+    //        right: Val::Px(15.0),
+    //        ..default()
+    //    }),
+    //    DebugText,
+    //));
 
     // Text with multiple sections
     commands.spawn((
@@ -249,7 +209,7 @@ fn setup(
     ));
 
     // camera
-    let projection = PerspectiveProjectionGW2 {
+    let projection = PerspectiveProjection {
         fov: 1.222,
         far: 1000.0,
         ..Default::default()
@@ -387,27 +347,30 @@ fn map_change_event(
                     poi: poi_lock.clone(),
                 };
 
-                let mut billboard_mesh: Mesh = Mesh::from(Quad::new(Vec2::new(2., 2.)));
+                let size = poi.get_icon_size().unwrap_or(1.0);
+
+                let mut billboard_mesh: Mesh =
+                    Mesh::from(Quad::new(Vec2::new(2. * size, 2. * size)));
+                let mut color = [1.0, 1.0, 1.0, poi.get_alpha().unwrap_or(1.0)];
                 // Build vertex colors for the quad. One entry per vertex (the corners of the quad)
-                let vertex_colors: Vec<[f32; 4]> = vec![
-                    Color::WHITE.as_rgba_f32(),
-                    Color::WHITE.as_rgba_f32(),
-                    Color::WHITE.as_rgba_f32(),
-                    Color::WHITE.as_rgba_f32(),
-                ];
+                let vertex_colors: Vec<[f32; 4]> = vec![color, color, color, color];
                 // Insert the vertex colors as an attribute
                 billboard_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vertex_colors);
+
+                let mut pos = Vec3::new(
+                    poi.pos.xpos,
+                    poi.pos.ypos + poi.get_height_offset().unwrap_or(0.0),
+                    poi.pos.zpos,
+                );
+                #[cfg(not(feature = "custom_projection"))]
+                pos.to_gw2_coordinate();
 
                 commands.spawn((
                     BillboardTextureBundle {
                         texture: billboard_textures
                             .add(BillboardTexture::Single(texture_handle.clone())),
                         mesh: BillboardMeshHandle(meshes.add(billboard_mesh)),
-                        transform: Transform::from_xyz(
-                            poi.pos.xpos,
-                            poi.pos.ypos + poi.get_height_offset().unwrap_or(0.0),
-                            poi.pos.zpos,
-                        ),
+                        transform: Transform::from_translation(pos),
                         ..default()
                     },
                     entity,
@@ -494,7 +457,8 @@ fn fade_out_pois(
         let far = poi.poi.read().unwrap().get_fade_far().unwrap_or(f32::MAX) / 39.37;
         let near = poi.poi.read().unwrap().get_fade_near().unwrap_or(0.0) / 39.37;
 
-        let a = (1.0 - (distance - near) / (far - near)).clamp(0.0, 1.0);
+        let a = (1.0 - (distance - near) / (far - near))
+            .clamp(0.0, poi.poi.read().unwrap().get_alpha().unwrap_or(1.0));
         for color in color_attribute.iter_mut() {
             color[3] = a;
         }

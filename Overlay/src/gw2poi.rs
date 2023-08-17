@@ -248,6 +248,7 @@ struct InheritablePOIData {
     pub height_offset: Option<f32>,
     pub reset_length: Option<f32>,
     pub display_name: Option<String>,
+    pub color: Option<String>,
     pub auto_trigger: Option<bool>,  // = false;
     pub has_countdown: Option<bool>, // = false;
     pub trigger_range: Option<f32>,  // = 5;
@@ -329,4 +330,6 @@ impl POI {
     getter_setter_poi!(height_offset, f32);
     getter_setter_poi!(fade_near, f32);
     getter_setter_poi!(fade_far, f32);
+    getter_setter_poi!(alpha, f32);
+    getter_setter_poi!(icon_size, f32);
 }
