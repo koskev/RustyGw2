@@ -14,8 +14,7 @@ mod system;
 mod winit_config;
 mod winit_windows;
 
-use bevy_a11y::AccessibilityRequested;
-use bevy_ecs::system::{SystemParam, SystemState};
+use bevy_ecs::system::SystemState;
 use bevy_tasks::tick_global_task_pools_on_main_thread;
 use system::{changed_window, create_window, despawn_window, CachedWindow};
 
@@ -25,32 +24,20 @@ pub use winit_windows::*;
 use bevy_app::{App, AppExit, Last, Plugin};
 use bevy_ecs::event::{Events, ManualEventReader};
 use bevy_ecs::prelude::*;
-use bevy_input::{
-    keyboard::KeyboardInput,
-    mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel},
-    touch::TouchInput,
-    touchpad::{TouchpadMagnify, TouchpadRotate},
-};
-use bevy_math::{ivec2, DVec2, Vec2};
+use bevy_input::mouse::MouseMotion;
+use bevy_math::Vec2;
 use bevy_utils::{
     tracing::{trace, warn},
     Instant,
 };
-use bevy_window::{
-    exit_on_all_closed, CursorEntered, CursorLeft, CursorMoved, FileDragAndDrop, Ime,
-    ReceivedCharacter, RequestRedraw, Window, WindowBackendScaleFactorChanged,
-    WindowCloseRequested, WindowCreated, WindowDestroyed, WindowFocused, WindowMoved,
-    WindowResized, WindowScaleFactorChanged, WindowThemeChanged,
-};
+use bevy_window::{exit_on_all_closed, RequestRedraw, Window, WindowCreated};
 
 use winit::{
-    event::{self, DeviceEvent, Event, StartCause, WindowEvent},
+    event::{self, DeviceEvent, Event, StartCause},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
 };
 
-use crate::accessibility::{AccessKitAdapters, AccessibilityPlugin, WinitActionHandlers};
-
-use crate::converters::convert_winit_theme;
+use crate::accessibility::AccessibilityPlugin;
 
 /// A [`Plugin`] that utilizes [`winit`] for window creation and event loop management.
 #[derive(Default)]
@@ -85,22 +72,11 @@ impl Plugin for WinitPlugin {
             Query<(Entity, &mut Window)>,
             EventWriter<WindowCreated>,
             NonSendMut<WinitWindows>,
-            NonSendMut<AccessKitAdapters>,
-            ResMut<WinitActionHandlers>,
-            ResMut<AccessibilityRequested>,
         )> = SystemState::from_world(&mut app.world);
 
         {
-            let (
-                commands,
-                event_loop,
-                mut new_windows,
-                event_writer,
-                winit_windows,
-                adapters,
-                handlers,
-                accessibility_requested,
-            ) = create_window_system_state.get_mut(&mut app.world);
+            let (commands, event_loop, mut new_windows, event_writer, winit_windows) =
+                create_window_system_state.get_mut(&mut app.world);
 
             // Here we need to create a winit-window and give it a WindowHandle which the renderer can use.
             // It needs to be spawned before the start of the startup schedule, so we cannot use a regular system.
@@ -131,37 +107,6 @@ where
 {
     use winit::platform::run_return::EventLoopExtRunReturn;
     event_loop.run_return(event_handler);
-}
-
-#[derive(SystemParam)]
-struct WindowEvents<'w> {
-    window_resized: EventWriter<'w, WindowResized>,
-    window_close_requested: EventWriter<'w, WindowCloseRequested>,
-    window_scale_factor_changed: EventWriter<'w, WindowScaleFactorChanged>,
-    window_backend_scale_factor_changed: EventWriter<'w, WindowBackendScaleFactorChanged>,
-    window_focused: EventWriter<'w, WindowFocused>,
-    window_moved: EventWriter<'w, WindowMoved>,
-    window_theme_changed: EventWriter<'w, WindowThemeChanged>,
-    window_destroyed: EventWriter<'w, WindowDestroyed>,
-}
-
-#[derive(SystemParam)]
-struct InputEvents<'w> {
-    keyboard_input: EventWriter<'w, KeyboardInput>,
-    character_input: EventWriter<'w, ReceivedCharacter>,
-    mouse_button_input: EventWriter<'w, MouseButtonInput>,
-    touchpad_magnify_input: EventWriter<'w, TouchpadMagnify>,
-    touchpad_rotate_input: EventWriter<'w, TouchpadRotate>,
-    mouse_wheel_input: EventWriter<'w, MouseWheel>,
-    touch_input: EventWriter<'w, TouchInput>,
-    ime_input: EventWriter<'w, Ime>,
-}
-
-#[derive(SystemParam)]
-struct CursorEvents<'w> {
-    cursor_moved: EventWriter<'w, CursorMoved>,
-    cursor_entered: EventWriter<'w, CursorEntered>,
-    cursor_left: EventWriter<'w, CursorLeft>,
 }
 
 /// Stores state that must persist between frames.
@@ -218,9 +163,6 @@ pub fn winit_runner(mut app: App) {
         Query<(Entity, &mut Window), Added<Window>>,
         EventWriter<WindowCreated>,
         NonSendMut<WinitWindows>,
-        NonSendMut<AccessKitAdapters>,
-        ResMut<WinitActionHandlers>,
-        ResMut<AccessibilityRequested>,
     )> = SystemState::from_world(&mut app.world);
 
     let mut finished_and_setup_done = false;
@@ -280,19 +222,8 @@ pub fn winit_runner(mut app: App) {
                 let mut system_state: SystemState<(
                     NonSend<WinitWindows>,
                     Query<(&mut Window, &mut CachedWindow)>,
-                    WindowEvents,
-                    InputEvents,
-                    CursorEvents,
-                    EventWriter<FileDragAndDrop>,
                 )> = SystemState::new(&mut app.world);
-                let (
-                    winit_windows,
-                    mut window_query,
-                    mut window_events,
-                    mut input_events,
-                    mut cursor_events,
-                    mut file_drag_and_drop_events,
-                ) = system_state.get_mut(&mut app.world);
+                let (winit_windows, mut window_query) = system_state.get_mut(&mut app.world);
 
                 // Entity of this window
                 let window_entity =
@@ -306,7 +237,7 @@ pub fn winit_runner(mut app: App) {
                         return;
                     };
 
-                let (mut window, mut cache) =
+                let (window, mut cache) =
                     if let Ok((window, info)) = window_query.get_mut(window_entity) {
                         (window, info)
                     } else {
@@ -318,220 +249,6 @@ pub fn winit_runner(mut app: App) {
                     };
 
                 winit_state.low_power_event = true;
-
-                match event {
-                    WindowEvent::Resized(size) => {
-                        window
-                            .resolution
-                            .set_physical_resolution(size.width, size.height);
-
-                        window_events.window_resized.send(WindowResized {
-                            window: window_entity,
-                            width: window.width(),
-                            height: window.height(),
-                        });
-                    }
-                    WindowEvent::CloseRequested => {
-                        window_events
-                            .window_close_requested
-                            .send(WindowCloseRequested {
-                                window: window_entity,
-                            });
-                    }
-                    WindowEvent::KeyboardInput { ref input, .. } => {
-                        input_events
-                            .keyboard_input
-                            .send(converters::convert_keyboard_input(input, window_entity));
-                    }
-                    WindowEvent::CursorMoved { position, .. } => {
-                        let physical_position = DVec2::new(position.x, position.y);
-
-                        window.set_physical_cursor_position(Some(physical_position));
-
-                        cursor_events.cursor_moved.send(CursorMoved {
-                            window: window_entity,
-                            position: (physical_position / window.resolution.scale_factor())
-                                .as_vec2(),
-                        });
-                    }
-                    WindowEvent::CursorEntered { .. } => {
-                        cursor_events.cursor_entered.send(CursorEntered {
-                            window: window_entity,
-                        });
-                    }
-                    WindowEvent::CursorLeft { .. } => {
-                        window.set_physical_cursor_position(None);
-
-                        cursor_events.cursor_left.send(CursorLeft {
-                            window: window_entity,
-                        });
-                    }
-                    WindowEvent::MouseInput { state, button, .. } => {
-                        input_events.mouse_button_input.send(MouseButtonInput {
-                            button: converters::convert_mouse_button(button),
-                            state: converters::convert_element_state(state),
-                            window: window_entity,
-                        });
-                    }
-                    WindowEvent::TouchpadMagnify { delta, .. } => {
-                        input_events
-                            .touchpad_magnify_input
-                            .send(TouchpadMagnify(delta as f32));
-                    }
-                    WindowEvent::TouchpadRotate { delta, .. } => {
-                        input_events
-                            .touchpad_rotate_input
-                            .send(TouchpadRotate(delta));
-                    }
-                    WindowEvent::MouseWheel { delta, .. } => match delta {
-                        event::MouseScrollDelta::LineDelta(x, y) => {
-                            input_events.mouse_wheel_input.send(MouseWheel {
-                                unit: MouseScrollUnit::Line,
-                                x,
-                                y,
-                                window: window_entity,
-                            });
-                        }
-                        event::MouseScrollDelta::PixelDelta(p) => {
-                            input_events.mouse_wheel_input.send(MouseWheel {
-                                unit: MouseScrollUnit::Pixel,
-                                x: p.x as f32,
-                                y: p.y as f32,
-                                window: window_entity,
-                            });
-                        }
-                    },
-                    WindowEvent::Touch(touch) => {
-                        let location = touch.location.to_logical(window.resolution.scale_factor());
-
-                        // Event
-                        input_events
-                            .touch_input
-                            .send(converters::convert_touch_input(touch, location));
-                    }
-                    WindowEvent::ReceivedCharacter(c) => {
-                        input_events.character_input.send(ReceivedCharacter {
-                            window: window_entity,
-                            char: c,
-                        });
-                    }
-                    WindowEvent::ScaleFactorChanged {
-                        scale_factor,
-                        new_inner_size,
-                    } => {
-                        window_events.window_backend_scale_factor_changed.send(
-                            WindowBackendScaleFactorChanged {
-                                window: window_entity,
-                                scale_factor,
-                            },
-                        );
-
-                        let prior_factor = window.resolution.scale_factor();
-                        window.resolution.set_scale_factor(scale_factor);
-                        let new_factor = window.resolution.scale_factor();
-
-                        if let Some(forced_factor) = window.resolution.scale_factor_override() {
-                            // If there is a scale factor override, then force that to be used
-                            // Otherwise, use the OS suggested size
-                            // We have already told the OS about our resize constraints, so
-                            // the new_inner_size should take those into account
-                            *new_inner_size =
-                                winit::dpi::LogicalSize::new(window.width(), window.height())
-                                    .to_physical::<u32>(forced_factor);
-                            // TODO: Should this not trigger a WindowsScaleFactorChanged?
-                        } else if approx::relative_ne!(new_factor, prior_factor) {
-                            // Trigger a change event if they are approximately different
-                            window_events.window_scale_factor_changed.send(
-                                WindowScaleFactorChanged {
-                                    window: window_entity,
-                                    scale_factor,
-                                },
-                            );
-                        }
-
-                        let new_logical_width = (new_inner_size.width as f64 / new_factor) as f32;
-                        let new_logical_height = (new_inner_size.height as f64 / new_factor) as f32;
-                        if approx::relative_ne!(window.width(), new_logical_width)
-                            || approx::relative_ne!(window.height(), new_logical_height)
-                        {
-                            window_events.window_resized.send(WindowResized {
-                                window: window_entity,
-                                width: new_logical_width,
-                                height: new_logical_height,
-                            });
-                        }
-                        window
-                            .resolution
-                            .set_physical_resolution(new_inner_size.width, new_inner_size.height);
-                    }
-                    WindowEvent::Focused(focused) => {
-                        // Component
-                        window.focused = focused;
-
-                        window_events.window_focused.send(WindowFocused {
-                            window: window_entity,
-                            focused,
-                        });
-                    }
-                    WindowEvent::DroppedFile(path_buf) => {
-                        file_drag_and_drop_events.send(FileDragAndDrop::DroppedFile {
-                            window: window_entity,
-                            path_buf,
-                        });
-                    }
-                    WindowEvent::HoveredFile(path_buf) => {
-                        file_drag_and_drop_events.send(FileDragAndDrop::HoveredFile {
-                            window: window_entity,
-                            path_buf,
-                        });
-                    }
-                    WindowEvent::HoveredFileCancelled => {
-                        file_drag_and_drop_events.send(FileDragAndDrop::HoveredFileCanceled {
-                            window: window_entity,
-                        });
-                    }
-                    WindowEvent::Moved(position) => {
-                        let position = ivec2(position.x, position.y);
-
-                        window.position.set(position);
-
-                        window_events.window_moved.send(WindowMoved {
-                            entity: window_entity,
-                            position,
-                        });
-                    }
-                    WindowEvent::Ime(event) => match event {
-                        event::Ime::Preedit(value, cursor) => {
-                            input_events.ime_input.send(Ime::Preedit {
-                                window: window_entity,
-                                value,
-                                cursor,
-                            });
-                        }
-                        event::Ime::Commit(value) => input_events.ime_input.send(Ime::Commit {
-                            window: window_entity,
-                            value,
-                        }),
-                        event::Ime::Enabled => input_events.ime_input.send(Ime::Enabled {
-                            window: window_entity,
-                        }),
-                        event::Ime::Disabled => input_events.ime_input.send(Ime::Disabled {
-                            window: window_entity,
-                        }),
-                    },
-                    WindowEvent::ThemeChanged(theme) => {
-                        window_events.window_theme_changed.send(WindowThemeChanged {
-                            window: window_entity,
-                            theme: convert_winit_theme(theme),
-                        });
-                    }
-                    WindowEvent::Destroyed => {
-                        window_events.window_destroyed.send(WindowDestroyed {
-                            window: window_entity,
-                        });
-                    }
-                    _ => {}
-                }
 
                 if window.is_changed() {
                     cache.window = window.clone();
@@ -618,15 +335,8 @@ pub fn winit_runner(mut app: App) {
         }
 
         if winit_state.active {
-            let (
-                commands,
-                mut new_windows,
-                created_window_writer,
-                winit_windows,
-                adapters,
-                handlers,
-                accessibility_requested,
-            ) = create_window_system_state.get_mut(&mut app.world);
+            let (commands, mut new_windows, created_window_writer, winit_windows) =
+                create_window_system_state.get_mut(&mut app.world);
 
             // Responsible for creating new windows
             create_window(
