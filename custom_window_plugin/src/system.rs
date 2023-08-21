@@ -1,10 +1,9 @@
-use bevy_a11y::AccessibilityRequested;
 use bevy_ecs::{
     entity::Entity,
     event::EventWriter,
     prelude::{Changed, Component, Resource},
     removal_detection::RemovedComponents,
-    system::{Commands, NonSendMut, Query, ResMut},
+    system::{Commands, NonSendMut, Query},
     world::Mut,
 };
 use bevy_utils::{
@@ -19,12 +18,9 @@ use winit::{
     event_loop::EventLoopWindowTarget,
 };
 
-#[cfg(target_arch = "wasm32")]
-use crate::web_resize::{CanvasParentResizeEventChannel, WINIT_CANVAS_SELECTOR};
 use crate::{
-    accessibility::{AccessKitAdapters, WinitActionHandlers},
     converters::{self, convert_window_level, convert_window_theme, convert_winit_theme},
-    custom_window, get_best_videomode, get_fitting_videomode, WinitWindows,
+    get_best_videomode, get_fitting_videomode, WinitWindows,
 };
 
 /// System responsible for creating new windows whenever a [`Window`] component is added
@@ -38,9 +34,6 @@ pub(crate) fn create_window<'a>(
     created_windows: impl Iterator<Item = (Entity, Mut<'a, Window>)>,
     mut event_writer: EventWriter<WindowCreated>,
     mut winit_windows: NonSendMut<WinitWindows>,
-    mut adapters: NonSendMut<AccessKitAdapters>,
-    mut handlers: ResMut<WinitActionHandlers>,
-    mut accessibility_requested: ResMut<AccessibilityRequested>,
 ) {
     for (entity, mut window) in created_windows {
         if winit_windows.get_window(entity).is_some() {
@@ -53,14 +46,7 @@ pub(crate) fn create_window<'a>(
             entity
         );
 
-        let winit_window = winit_windows.create_window(
-            event_loop,
-            entity,
-            &window,
-            &mut adapters,
-            &mut handlers,
-            &mut accessibility_requested,
-        );
+        let winit_window = winit_windows.create_window(event_loop, entity, &window);
 
         if let Some(theme) = winit_window.theme() {
             window.window_theme = Some(convert_winit_theme(theme));

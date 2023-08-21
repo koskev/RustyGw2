@@ -46,9 +46,6 @@ impl WinitWindows {
         event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
         entity: Entity,
         window: &Window,
-        adapters: &mut AccessKitAdapters,
-        handlers: &mut WinitActionHandlers,
-        accessibility_requested: &mut AccessibilityRequested,
     ) -> &winit::window::Window {
         let mut winit_window_builder = winit::window::WindowBuilder::new();
 
@@ -63,42 +60,6 @@ impl WinitWindows {
                 .with_inner_size(LogicalSize::new(1920, 1080))
                 .with_parent_window(Some(my_window))
         };
-
-        //winit_window_builder = match window.mode {
-        //    WindowMode::BorderlessFullscreen => winit_window_builder.with_fullscreen(Some(
-        //        winit::window::Fullscreen::Borderless(event_loop.primary_monitor()),
-        //    )),
-        //    WindowMode::Fullscreen => {
-        //        winit_window_builder.with_fullscreen(Some(winit::window::Fullscreen::Exclusive(
-        //            get_best_videomode(&event_loop.primary_monitor().unwrap()),
-        //        )))
-        //    }
-        //    WindowMode::SizedFullscreen => winit_window_builder.with_fullscreen(Some(
-        //        winit::window::Fullscreen::Exclusive(get_fitting_videomode(
-        //            &event_loop.primary_monitor().unwrap(),
-        //            window.width() as u32,
-        //            window.height() as u32,
-        //        )),
-        //    )),
-        //    WindowMode::Windowed => {
-        //        if let Some(position) = winit_window_position(
-        //            &window.position,
-        //            &window.resolution,
-        //            event_loop.available_monitors(),
-        //            event_loop.primary_monitor(),
-        //            None,
-        //        ) {
-        //            winit_window_builder = winit_window_builder.with_position(position);
-        //        }
-
-        //        let logical_size = LogicalSize::new(window.width(), window.height());
-        //        if let Some(sf) = window.resolution.scale_factor_override() {
-        //            winit_window_builder.with_inner_size(logical_size.to_physical::<f64>(sf))
-        //        } else {
-        //            winit_window_builder.with_inner_size(logical_size)
-        //        }
-        //    }
-        //};
 
         winit_window_builder = winit_window_builder
             .with_window_level(convert_window_level(window.window_level))
@@ -130,48 +91,6 @@ impl WinitWindows {
         let mut winit_window_builder = winit_window_builder.with_title(window.title.as_str());
 
         let winit_window = winit_window_builder.build(event_loop).unwrap();
-        let name = window.title.clone();
-
-        let mut root_builder = NodeBuilder::new(Role::Window);
-        root_builder.set_name(name.into_boxed_str());
-        let root = root_builder.build(&mut NodeClassSet::lock_global());
-
-        let accesskit_window_id = entity.to_node_id();
-        let handler = WinitActionHandler::default();
-        let accessibility_requested = (*accessibility_requested).clone();
-        let adapter = Adapter::with_action_handler(
-            &winit_window,
-            move || {
-                accessibility_requested.store(true, Ordering::SeqCst);
-                TreeUpdate {
-                    nodes: vec![(accesskit_window_id, root)],
-                    tree: Some(Tree::new(accesskit_window_id)),
-                    focus: None,
-                }
-            },
-            Box::new(handler.clone()),
-        );
-        adapters.insert(entity, adapter);
-        handlers.insert(entity, handler);
-        winit_window.set_visible(true);
-
-        // Do not set the grab mode on window creation if it's none, this can fail on mobile
-        if window.cursor.grab_mode != CursorGrabMode::None {
-            attempt_grab(&winit_window, window.cursor.grab_mode);
-        }
-
-        winit_window.set_cursor_visible(window.cursor.visible);
-
-        // Do not set the cursor hittest on window creation if it's false, as it will always fail on some
-        // platforms and log an unfixable warning.
-        if !window.cursor.hit_test {
-            if let Err(err) = winit_window.set_cursor_hittest(window.cursor.hit_test) {
-                warn!(
-                    "Could not set cursor hit test for window {:?}: {:?}",
-                    window.title, err
-                );
-            }
-        }
 
         self.entity_to_winit.insert(entity, winit_window.id());
         self.winit_to_entity.insert(winit_window.id(), entity);

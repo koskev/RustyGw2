@@ -111,9 +111,6 @@ impl Plugin for WinitPlugin {
                 new_windows.iter_mut(),
                 event_writer,
                 winit_windows,
-                adapters,
-                handlers,
-                accessibility_requested,
             );
         }
 
@@ -638,9 +635,6 @@ pub fn winit_runner(mut app: App) {
                 new_windows.iter_mut(),
                 created_window_writer,
                 winit_windows,
-                adapters,
-                handlers,
-                accessibility_requested,
             );
 
             create_window_system_state.apply(&mut app.world);
