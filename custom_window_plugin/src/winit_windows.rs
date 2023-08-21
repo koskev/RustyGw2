@@ -1,24 +1,16 @@
 #![warn(missing_docs)]
-use std::sync::atomic::Ordering;
 
-use accesskit_winit::Adapter;
-use bevy_a11y::{
-    accesskit::{NodeBuilder, NodeClassSet, Role, Tree, TreeUpdate},
-    AccessKitEntityExt, AccessibilityRequested,
-};
 use bevy_ecs::entity::Entity;
 
 use bevy_utils::{tracing::warn, HashMap};
-use bevy_window::{CursorGrabMode, Window, WindowMode, WindowPosition, WindowResolution};
+use bevy_window::{CursorGrabMode, Window, WindowPosition, WindowResolution};
 
 use winit::{
-    dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Position, Size},
+    dpi::{LogicalSize, PhysicalPosition},
     monitor::MonitorHandle,
-    platform::x11::WindowBuilderExtX11,
 };
 
 use crate::{
-    accessibility::{AccessKitAdapters, WinitActionHandler, WinitActionHandlers},
     converters::{convert_window_level, convert_window_theme},
     custom_window,
 };
@@ -263,9 +255,3 @@ pub fn winit_window_position(
         }
     }
 }
-
-// WARNING: this only works under the assumption that wasm runtime is single threaded
-#[cfg(target_arch = "wasm32")]
-unsafe impl Send for WinitWindows {}
-#[cfg(target_arch = "wasm32")]
-unsafe impl Sync for WinitWindows {}

@@ -7,7 +7,6 @@
 //! The app's [runner](bevy_app::App::runner) is set by `WinitPlugin` and handles the `winit` [`EventLoop`](winit::event_loop::EventLoop).
 //! See `winit_runner` for details.
 
-pub mod accessibility;
 mod converters;
 mod custom_window;
 mod system;
@@ -16,7 +15,7 @@ mod winit_windows;
 
 use bevy_ecs::system::SystemState;
 use bevy_tasks::tick_global_task_pools_on_main_thread;
-use system::{changed_window, create_window, despawn_window, CachedWindow};
+use system::{create_window, CachedWindow};
 
 pub use winit_config::*;
 pub use winit_windows::*;
@@ -37,8 +36,6 @@ use winit::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
 };
 
-use crate::accessibility::AccessibilityPlugin;
-
 /// A [`Plugin`] that utilizes [`winit`] for window creation and event loop management.
 #[derive(Default)]
 pub struct WinitPlugin;
@@ -52,19 +49,7 @@ impl Plugin for WinitPlugin {
 
         app.init_non_send_resource::<WinitWindows>()
             .init_resource::<WinitSettings>()
-            .set_runner(winit_runner)
-            // exit_on_all_closed only uses the query to determine if the query is empty,
-            // and so doesn't care about ordering relative to changed_window
-            .add_systems(
-                Last,
-                (
-                    changed_window.ambiguous_with(exit_on_all_closed),
-                    // Update the state of the window before attempting to despawn to ensure consistent event ordering
-                    despawn_window.after(changed_window),
-                ),
-            );
-
-        app.add_plugins(AccessibilityPlugin);
+            .set_runner(winit_runner);
 
         let mut create_window_system_state: SystemState<(
             Commands,
