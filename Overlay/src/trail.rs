@@ -58,7 +58,7 @@ pub struct Trail {
     pub texture: PathBuf,
     pub color: Option<String>,
     #[serde(rename = "animSpeed")]
-    pub anim_speed: f32,
+    pub anim_speed: Option<f32>,
     #[serde(flatten)]
     pub poi: POI,
 

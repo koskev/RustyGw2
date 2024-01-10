@@ -15,10 +15,11 @@ use crate::{
 pub struct OverlayData {
     #[serde(
         rename = "MarkerCategory",
-        deserialize_with = "deserialize_marker_category_vec"
+        deserialize_with = "deserialize_marker_category_vec",
+        default
     )]
     pub marker_category: Vec<MarkerCategoryContainer>,
-    #[serde(rename = "POIs")]
+    #[serde(rename = "POIs", default)]
     pub pois: POIs,
 }
 
@@ -84,9 +85,9 @@ impl OverlayData {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct POIs {
-    #[serde(rename = "POI", deserialize_with = "deserialize_poi_vec")]
+    #[serde(rename = "POI", deserialize_with = "deserialize_poi_vec", default)]
     pub poi_list: Vec<PoiContainer>,
-    #[serde(rename = "Trail", deserialize_with = "deserialize_trail_vec")]
+    #[serde(rename = "Trail", deserialize_with = "deserialize_trail_vec", default)]
     pub trail_list: Vec<TrailContainer>,
 }
 
@@ -94,10 +95,28 @@ pub struct POIs {
 mod tests {
     use std::sync::{Arc, RwLock};
 
+    use walkdir::WalkDir;
+
     use crate::{
         gw2poi::{MarkerCategory, PoiTrait, POI},
         overlay_data::OverlayData,
     };
+
+    #[test]
+    fn xml_file_test() {
+        let mut overlay_data: OverlayData = OverlayData::default();
+        for entry in WalkDir::new("../pois").into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() && entry.path().extension().unwrap_or_default() == "xml"
+            {
+                println!("Found XML file: {:?}", entry.path());
+                let file_path = entry.path().to_string_lossy().to_string();
+                let data = OverlayData::from_file(&file_path);
+                overlay_data.merge(data.unwrap());
+            }
+        }
+
+        overlay_data.fill_poi_parents();
+    }
 
     #[test]
     fn xml_test() {
@@ -117,7 +136,7 @@ mod tests {
             <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
             <Trail type="collectible.LionArchKarka.Part2.Karka2" GUID="gLZdqI4M2EoIO/zrw5KqPg==" trailData="Data/Karkatrail2.trl" texture="Data/Karkahunt.png" color="F78181" alpha="0.8" fadeNear="3000" fadeFar="4000" animSpeed="0"/>
             <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
-            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000"/>
+            <POI MapID="50" xpos="-300.387" ypos="31.3539" zpos="358.293" type="collectible.LionArchKarka.Part1.Karka1" GUID="BJLO59XWN0u9lzYPrnH16w==" fadeNear="3000" fadeFar="4000" behavior="3" triggerRange="5"/>
             </POIs>
             </OverlayData>
             "#;

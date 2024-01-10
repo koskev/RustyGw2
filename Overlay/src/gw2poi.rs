@@ -227,6 +227,8 @@ struct InheritablePOIData {
         deserialize_with = "deserialize_option_string_to_number"
     )]
     pub alpha: Option<f32>, // = 1.0f;
+    // TODO: don't skip
+    #[serde(skip)]
     pub behavior: Option<PoiBehavior>, // = poiBehavior::DEFAULT;
     #[serde(
         default,
