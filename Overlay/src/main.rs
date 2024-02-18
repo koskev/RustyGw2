@@ -64,7 +64,7 @@ struct MapData {
 fn main() {
     let pid = processutils::find_wine_process("GW2-64.exe");
     info!("Got pid {:?}", pid);
-    processutils::start_gw2_helper(pid.unwrap(), "/tmp/mumble.exe");
+    let (_mumble_file, _) = processutils::start_gw2_helper(pid.unwrap());
 
     // TODO: instead of own plugin just change the attributes etc. of the existing window by
     // getting the raw handle

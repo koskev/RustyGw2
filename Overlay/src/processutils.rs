@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::io::Write;
 
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd;
+use tempfile::NamedTempFile;
 
 pub fn find_wine_process(name: &str) -> Option<i32> {
     println!("### Readin proc in rust");
@@ -100,7 +102,11 @@ pub fn remove_from_env(
     env
 }
 
-pub fn start_gw2_helper(pid: i32, helper_path: &str) -> i32 {
+pub fn start_gw2_helper(pid: i32) -> (NamedTempFile, i32) {
+    // XXX: Increases memory footprint, but makes it easier to manage
+    let mumble_process_data = include_bytes!("../helper/mumble.exe");
+    let mut mumble_file = NamedTempFile::new().unwrap();
+    mumble_file.write_all(mumble_process_data).unwrap();
     let env = get_environment(pid);
 
     let envs_to_remove = vec![
@@ -118,9 +124,7 @@ pub fn start_gw2_helper(pid: i32, helper_path: &str) -> i32 {
         .clone();
     println!("Wine: {} prefix: {}", wine, prefix);
 
-    let mut pid: i32 = -1;
-    if !helper_path.is_empty() {
-        pid = start_process(&wine, vec![&helper_path], env) as i32;
-    }
-    pid
+    let file_path = mumble_file.path().to_str().unwrap();
+    let pid = start_process(&wine, vec![file_path], env) as i32;
+    (mumble_file, pid)
 }
